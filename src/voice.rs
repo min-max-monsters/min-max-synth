@@ -2,7 +2,7 @@
 //! optional sample playback. Created once and recycled by the voice pool.
 
 use crate::dsp::{
-    midi_to_hz, Adsr, BitCrusher, FmOsc, Lfo, NoiseOsc, PulseOsc, SawOsc, Sweep, TriangleOsc,
+    midi_to_hz, Adsr, FmOsc, Lfo, NoiseOsc, PulseOsc, SawOsc, Sweep, TriangleOsc,
     Waveform, WaveOsc,
 };
 use crate::samples::{DrumKind, SamplePlayer};
@@ -149,9 +149,10 @@ impl Voice {
         }
     }
 
-    /// Render one sample.
+    /// Render one sample. The bitcrusher is applied to the bus, not per-voice,
+    /// so this returns a clean per-voice signal.
     #[inline]
-    pub fn tick(&mut self, params: &VoiceParams, crusher: &mut BitCrusher) -> f32 {
+    pub fn tick(&mut self, params: &VoiceParams) -> f32 {
         let Some(note) = self.note else { return 0.0 };
         let env = self.env.tick();
         if !self.env.is_active() && !self.sample.is_active() {
@@ -160,9 +161,7 @@ impl Voice {
         }
 
         if self.is_drum {
-            let s = self.sample.tick(self.sample_rate) * self.velocity;
-            let crushed = crusher.process(s, self.sample_rate, params.bit_rate_hz, params.bit_depth);
-            return crushed;
+            return self.sample.tick(self.sample_rate) * self.velocity;
         }
 
         // Pitch chain: base note + octave + fine + vibrato + sweep.
@@ -185,7 +184,6 @@ impl Voice {
             Waveform::Saw => self.saw.tick(freq, self.sample_rate),
         };
 
-        let s = raw * env * self.velocity;
-        crusher.process(s, self.sample_rate, params.bit_rate_hz, params.bit_depth)
+        raw * env * self.velocity
     }
 }

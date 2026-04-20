@@ -50,8 +50,25 @@ impl Waveform {
     }
 }
 
-/// Pulse / square oscillator with naive (band-unlimited) output. Aliasing is
-/// part of the retro charm.
+/// PolyBLEP band-limiting kernel. Returns the correction value to add (or
+/// subtract, mirrored by sign) at a unit-amplitude discontinuity. `t` is the
+/// oscillator phase in [0, 1) and `dt` is the per-sample phase increment.
+#[inline]
+fn poly_blep(mut t: f32, dt: f32) -> f32 {
+    if t < dt {
+        t /= dt;
+        2.0 * t - t * t - 1.0
+    } else if t > 1.0 - dt {
+        t = (t - 1.0) / dt;
+        t * t + 2.0 * t + 1.0
+    } else {
+        0.0
+    }
+}
+
+/// Pulse / square oscillator using PolyBLEP to suppress aliasing. The
+/// underlying waveform is still a hard square (so the "chip" character is
+/// preserved), but the discontinuities are band-limited.
 #[derive(Debug, Default, Clone)]
 pub struct PulseOsc {
     phase: f32,
@@ -66,8 +83,18 @@ impl PulseOsc {
     /// `duty` is 0..1 (0.5 = square).
     #[inline]
     pub fn tick(&mut self, freq_hz: f32, sample_rate: f32, duty: f32) -> f32 {
-        let s = if self.phase < duty { 1.0 } else { -1.0 };
-        self.phase += freq_hz / sample_rate;
+        let dt = (freq_hz / sample_rate).max(0.0);
+        let duty = duty.clamp(0.01, 0.99);
+        let mut s = if self.phase < duty { 1.0 } else { -1.0 };
+        // Rising edge at phase=0.
+        s += poly_blep(self.phase, dt);
+        // Falling edge at phase=duty.
+        let mut t2 = self.phase - duty;
+        if t2 < 0.0 {
+            t2 += 1.0;
+        }
+        s -= poly_blep(t2, dt);
+        self.phase += dt;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
         }
@@ -211,7 +238,7 @@ impl FmOsc {
     }
 }
 
-/// Naive saw (aliased — intentional for retro vibe).
+/// Saw oscillator with PolyBLEP anti-aliasing on the falling edge.
 #[derive(Debug, Default, Clone)]
 pub struct SawOsc {
     phase: f32,
@@ -223,8 +250,10 @@ impl SawOsc {
     }
     #[inline]
     pub fn tick(&mut self, freq_hz: f32, sample_rate: f32) -> f32 {
-        let s = self.phase * 2.0 - 1.0;
-        self.phase += freq_hz / sample_rate;
+        let dt = (freq_hz / sample_rate).max(0.0);
+        let mut s = self.phase * 2.0 - 1.0;
+        s -= poly_blep(self.phase, dt);
+        self.phase += dt;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
         }

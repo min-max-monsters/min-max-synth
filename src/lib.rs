@@ -172,8 +172,17 @@ impl Plugin for MinMaxSynth {
             let gain = self.params.gain.smoothed.next();
             let mut mix = 0.0_f32;
             for v in &mut self.voices {
-                mix += v.tick(&snapshot, &mut self.crusher);
+                mix += v.tick(&snapshot);
             }
+            // Apply the bitcrusher once on the bus, not per-voice — otherwise
+            // its sample-rate-reduction accumulator would advance N× per
+            // sample with N voices and turn into noise.
+            mix = self.crusher.process(
+                mix,
+                self.sample_rate,
+                snapshot.bit_rate_hz,
+                snapshot.bit_depth,
+            );
             // Give the bus enough headroom that a few simultaneous full-scale
             // pulse voices don't immediately clip, then apply a cheap soft
             // clipper so anything still over the rails distorts musically
