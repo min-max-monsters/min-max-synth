@@ -20,6 +20,8 @@ pub struct VoiceParams {
     pub decay: f32,
     pub sustain: f32,
     pub release: f32,
+    pub duty_lfo_rate: f32,
+    pub duty_lfo_depth: f32,
     pub vibrato_rate: f32,
     pub vibrato_depth_semi: f32,
     pub vibrato_delay: f32,
@@ -56,6 +58,7 @@ pub struct Voice {
     // Modulators
     env: Adsr,
     vibrato: Lfo,
+    duty_lfo: Lfo,
     sweep: Sweep,
 
     // Sample playback (drum mode)
@@ -79,6 +82,7 @@ impl Voice {
             saw: SawOsc::default(),
             env: Adsr::new(sample_rate),
             vibrato: Lfo::default(),
+            duty_lfo: Lfo::default(),
             sweep: Sweep::default(),
             sample: SamplePlayer::default(),
             is_drum: false,
@@ -114,6 +118,7 @@ impl Voice {
         self.fm.reset();
         self.saw.reset();
         self.vibrato.reset();
+        self.duty_lfo.reset();
         self.sweep.reset();
 
         if params.drum_mode {
@@ -202,8 +207,16 @@ impl Voice {
             + sweep_offset;
         let freq = midi_to_hz(n);
 
+        let duty = if params.duty_lfo_depth > 0.0 {
+            let lfo = self.duty_lfo.tick(params.duty_lfo_rate, self.sample_rate);
+            // Modulate around the configured duty by ±depth*0.45 (so we never reach 0/1).
+            (params.pulse_duty + lfo * params.duty_lfo_depth * 0.45).clamp(0.05, 0.95)
+        } else {
+            params.pulse_duty
+        };
+
         let raw = match params.waveform {
-            Waveform::Pulse => self.pulse.tick(freq, self.sample_rate, params.pulse_duty),
+            Waveform::Pulse => self.pulse.tick(freq, self.sample_rate, duty),
             Waveform::Triangle => self.triangle.tick(freq, self.sample_rate),
             Waveform::Wave4Bit => self.wave.tick(freq, self.sample_rate),
             Waveform::Noise => self.noise.tick(freq, self.sample_rate, params.noise_short),

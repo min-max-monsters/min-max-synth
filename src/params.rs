@@ -74,6 +74,11 @@ pub struct SynthParams {
     #[id = "rel"]
     pub release: FloatParam,
 
+    #[id = "duty_lfo_rt"]
+    pub duty_lfo_rate: FloatParam,
+    #[id = "duty_lfo_dp"]
+    pub duty_lfo_depth: FloatParam,
+
     #[id = "vib_rt"]
     pub vibrato_rate: FloatParam,
     #[id = "vib_dp"]
@@ -110,7 +115,7 @@ pub struct SynthParams {
 impl Default for SynthParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1100, 720),
+            editor_state: EguiState::from_size(1180, 760),
 
             gain: FloatParam::new(
                 "Gain",
@@ -144,6 +149,13 @@ impl Default for SynthParams {
             sustain: FloatParam::new("Sustain", 0.7, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
             release: ms("Release", 150.0, 0.0, 4000.0),
+
+            duty_lfo_rate: FloatParam::new("Duty LFO Rate", 4.0, FloatRange::Linear { min: 0.05, max: 20.0 })
+                .with_unit(" Hz").with_step_size(0.05),
+            duty_lfo_depth: FloatParam::new("Duty LFO Depth", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
 
             vibrato_rate: FloatParam::new("Vib Rate", 5.0, FloatRange::Linear { min: 0.1, max: 20.0 })
                 .with_unit(" Hz").with_step_size(0.1),
@@ -206,6 +218,8 @@ impl SynthParams {
             decay: self.decay.value() / 1000.0,
             sustain: self.sustain.value(),
             release: self.release.value() / 1000.0,
+            duty_lfo_rate: self.duty_lfo_rate.value(),
+            duty_lfo_depth: self.duty_lfo_depth.value(),
             vibrato_rate: self.vibrato_rate.value(),
             vibrato_depth_semi: self.vibrato_depth.value(),
             vibrato_delay: self.vibrato_delay.value() / 1000.0,

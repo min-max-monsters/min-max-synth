@@ -50,19 +50,31 @@ pub fn create_editor(
             ctx.request_repaint();
             handle_keyboard(ctx, state, &note_queue);
 
-            egui::CentralPanel::default()
-                .frame(egui::Frame::default().fill(palette::BG_DEEP).inner_margin(10))
+            let header_frame = egui::Frame::default()
+                .fill(palette::BG_DEEP)
+                .inner_margin(egui::Margin { left: 10, right: 10, top: 8, bottom: 6 });
+            egui::TopBottomPanel::top("header_panel")
+                .frame(header_frame)
                 .show(ctx, |ui| {
                     draw_header(ui, &params, setter, state);
-                    ui.add_space(6.0);
-                    egui::ScrollArea::both()
-                        .auto_shrink([false, false])
-                        .max_height(ui.available_height() - 130.0)
-                        .show(ui, |ui| {
-                            draw_main(ui, &params, setter);
-                        });
-                    ui.add_space(6.0);
+                });
+
+            let kb_frame = egui::Frame::default()
+                .fill(palette::BG_DEEP)
+                .inner_margin(egui::Margin { left: 10, right: 10, top: 4, bottom: 8 });
+            egui::TopBottomPanel::bottom("keyboard_panel")
+                .frame(kb_frame)
+                .show(ctx, |ui| {
                     draw_keyboard(ui, state);
+                });
+
+            let main_frame = egui::Frame::default()
+                .fill(palette::BG_DEEP)
+                .inner_margin(egui::Margin { left: 10, right: 10, top: 4, bottom: 4 });
+            egui::CentralPanel::default()
+                .frame(main_frame)
+                .show(ctx, |ui| {
+                    draw_main(ui, &params, setter);
                 });
         },
     )
@@ -126,6 +138,13 @@ fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                 });
                 ui.add_space(2.0);
                 led_toggle(ui, &params.noise_short, setter, "Short LFSR (NES)");
+            });
+            ui.add_space(6.0);
+            panel(ui, "DUTY LFO", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.duty_lfo_rate, setter).with_label("RATE"));
+                    ui.add(Knob::new(&params.duty_lfo_depth, setter).with_label("DEPTH"));
+                });
             });
             ui.add_space(6.0);
             panel(ui, "AMP", palette::BLUE, |ui| {
@@ -228,7 +247,7 @@ fn draw_waveform_picker(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter)
 }
 
 fn draw_adsr_visual(ui: &mut Ui, params: &SynthParams) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 50.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(260.0, 70.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, palette::BG_DEEP);
     painter.rect_stroke(rect, 2.0, Stroke::new(1.0, palette::BORDER), egui::StrokeKind::Inside);
@@ -311,8 +330,8 @@ fn draw_keyboard(ui: &mut Ui, state: &EditorState) {
 
 fn draw_piano(ui: &mut Ui, state: &EditorState) {
     let n_white = 21; // 3 octaves
-    let height = 70.0;
-    let width = ui.available_width().min(900.0);
+    let height = 80.0;
+    let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
 
