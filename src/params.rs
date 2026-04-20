@@ -111,37 +111,92 @@ pub struct SynthParams {
     #[id = "drum_p"]
     pub drum_pitch: BoolParam,
 
-    // Per-drum tweaks: tune (semitones), decay (0..1, 1 = natural), level (0..1).
-    #[id = "dr0_t"] pub drum_tune_0: FloatParam,
-    #[id = "dr0_d"] pub drum_decay_0: FloatParam,
-    #[id = "dr0_l"] pub drum_level_0: FloatParam,
-    #[id = "dr1_t"] pub drum_tune_1: FloatParam,
-    #[id = "dr1_d"] pub drum_decay_1: FloatParam,
-    #[id = "dr1_l"] pub drum_level_1: FloatParam,
-    #[id = "dr2_t"] pub drum_tune_2: FloatParam,
-    #[id = "dr2_d"] pub drum_decay_2: FloatParam,
-    #[id = "dr2_l"] pub drum_level_2: FloatParam,
-    #[id = "dr3_t"] pub drum_tune_3: FloatParam,
-    #[id = "dr3_d"] pub drum_decay_3: FloatParam,
-    #[id = "dr3_l"] pub drum_level_3: FloatParam,
-    #[id = "dr4_t"] pub drum_tune_4: FloatParam,
-    #[id = "dr4_d"] pub drum_decay_4: FloatParam,
-    #[id = "dr4_l"] pub drum_level_4: FloatParam,
-    #[id = "dr5_t"] pub drum_tune_5: FloatParam,
-    #[id = "dr5_d"] pub drum_decay_5: FloatParam,
-    #[id = "dr5_l"] pub drum_level_5: FloatParam,
-    #[id = "dr6_t"] pub drum_tune_6: FloatParam,
-    #[id = "dr6_d"] pub drum_decay_6: FloatParam,
-    #[id = "dr6_l"] pub drum_level_6: FloatParam,
-    #[id = "dr7_t"] pub drum_tune_7: FloatParam,
-    #[id = "dr7_d"] pub drum_decay_7: FloatParam,
-    #[id = "dr7_l"] pub drum_level_7: FloatParam,
+    // Per-drum: 9 params each (wave/freq/ratio/noise/pitch_env/pitch_time/decay/burst/level).
+    #[id="d0w"] pub d0_wave: IntParam,
+    #[id="d0f"] pub d0_freq: FloatParam,
+    #[id="d0r"] pub d0_ratio: FloatParam,
+    #[id="d0n"] pub d0_noise: FloatParam,
+    #[id="d0pe"] pub d0_pitch_env: FloatParam,
+    #[id="d0pt"] pub d0_pitch_time: FloatParam,
+    #[id="d0d"] pub d0_decay: FloatParam,
+    #[id="d0b"] pub d0_burst: FloatParam,
+    #[id="d0l"] pub d0_level: FloatParam,
+
+    #[id="d1w"] pub d1_wave: IntParam,
+    #[id="d1f"] pub d1_freq: FloatParam,
+    #[id="d1r"] pub d1_ratio: FloatParam,
+    #[id="d1n"] pub d1_noise: FloatParam,
+    #[id="d1pe"] pub d1_pitch_env: FloatParam,
+    #[id="d1pt"] pub d1_pitch_time: FloatParam,
+    #[id="d1d"] pub d1_decay: FloatParam,
+    #[id="d1b"] pub d1_burst: FloatParam,
+    #[id="d1l"] pub d1_level: FloatParam,
+
+    #[id="d2w"] pub d2_wave: IntParam,
+    #[id="d2f"] pub d2_freq: FloatParam,
+    #[id="d2r"] pub d2_ratio: FloatParam,
+    #[id="d2n"] pub d2_noise: FloatParam,
+    #[id="d2pe"] pub d2_pitch_env: FloatParam,
+    #[id="d2pt"] pub d2_pitch_time: FloatParam,
+    #[id="d2d"] pub d2_decay: FloatParam,
+    #[id="d2b"] pub d2_burst: FloatParam,
+    #[id="d2l"] pub d2_level: FloatParam,
+
+    #[id="d3w"] pub d3_wave: IntParam,
+    #[id="d3f"] pub d3_freq: FloatParam,
+    #[id="d3r"] pub d3_ratio: FloatParam,
+    #[id="d3n"] pub d3_noise: FloatParam,
+    #[id="d3pe"] pub d3_pitch_env: FloatParam,
+    #[id="d3pt"] pub d3_pitch_time: FloatParam,
+    #[id="d3d"] pub d3_decay: FloatParam,
+    #[id="d3b"] pub d3_burst: FloatParam,
+    #[id="d3l"] pub d3_level: FloatParam,
+
+    #[id="d4w"] pub d4_wave: IntParam,
+    #[id="d4f"] pub d4_freq: FloatParam,
+    #[id="d4r"] pub d4_ratio: FloatParam,
+    #[id="d4n"] pub d4_noise: FloatParam,
+    #[id="d4pe"] pub d4_pitch_env: FloatParam,
+    #[id="d4pt"] pub d4_pitch_time: FloatParam,
+    #[id="d4d"] pub d4_decay: FloatParam,
+    #[id="d4b"] pub d4_burst: FloatParam,
+    #[id="d4l"] pub d4_level: FloatParam,
+
+    #[id="d5w"] pub d5_wave: IntParam,
+    #[id="d5f"] pub d5_freq: FloatParam,
+    #[id="d5r"] pub d5_ratio: FloatParam,
+    #[id="d5n"] pub d5_noise: FloatParam,
+    #[id="d5pe"] pub d5_pitch_env: FloatParam,
+    #[id="d5pt"] pub d5_pitch_time: FloatParam,
+    #[id="d5d"] pub d5_decay: FloatParam,
+    #[id="d5b"] pub d5_burst: FloatParam,
+    #[id="d5l"] pub d5_level: FloatParam,
+
+    #[id="d6w"] pub d6_wave: IntParam,
+    #[id="d6f"] pub d6_freq: FloatParam,
+    #[id="d6r"] pub d6_ratio: FloatParam,
+    #[id="d6n"] pub d6_noise: FloatParam,
+    #[id="d6pe"] pub d6_pitch_env: FloatParam,
+    #[id="d6pt"] pub d6_pitch_time: FloatParam,
+    #[id="d6d"] pub d6_decay: FloatParam,
+    #[id="d6b"] pub d6_burst: FloatParam,
+    #[id="d6l"] pub d6_level: FloatParam,
+
+    #[id="d7w"] pub d7_wave: IntParam,
+    #[id="d7f"] pub d7_freq: FloatParam,
+    #[id="d7r"] pub d7_ratio: FloatParam,
+    #[id="d7n"] pub d7_noise: FloatParam,
+    #[id="d7pe"] pub d7_pitch_env: FloatParam,
+    #[id="d7pt"] pub d7_pitch_time: FloatParam,
+    #[id="d7d"] pub d7_decay: FloatParam,
+    #[id="d7b"] pub d7_burst: FloatParam,
+    #[id="d7l"] pub d7_level: FloatParam,
 }
 
 impl Default for SynthParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1280, 780),
+            editor_state: EguiState::from_size(1280, 860),
 
             gain: FloatParam::new(
                 "Gain",
@@ -218,42 +273,176 @@ impl Default for SynthParams {
             drum_mode: BoolParam::new("Drum Mode", false),
             drum_pitch: BoolParam::new("Drum Pitch Tracks Note", true),
 
-            drum_tune_0: drum_tune("Kick"),    drum_decay_0: drum_decay("Kick"),    drum_level_0: drum_level("Kick"),
-            drum_tune_1: drum_tune("Snare"),   drum_decay_1: drum_decay("Snare"),   drum_level_1: drum_level("Snare"),
-            drum_tune_2: drum_tune("Hat Cl"),  drum_decay_2: drum_decay("Hat Cl"),  drum_level_2: drum_level("Hat Cl"),
-            drum_tune_3: drum_tune("Hat Op"),  drum_decay_3: drum_decay("Hat Op"),  drum_level_3: drum_level("Hat Op"),
-            drum_tune_4: drum_tune("Tom"),     drum_decay_4: drum_decay("Tom"),     drum_level_4: drum_level("Tom"),
-            drum_tune_5: drum_tune("Clap"),    drum_decay_5: drum_decay("Clap"),    drum_level_5: drum_level("Clap"),
-            drum_tune_6: drum_tune("Cowbell"), drum_decay_6: drum_decay("Cowbell"), drum_level_6: drum_level("Cowbell"),
-            drum_tune_7: drum_tune("Zap"),     drum_decay_7: drum_decay("Zap"),     drum_level_7: drum_level("Zap"),
+            // Defaults are tuned to recreate the original 8 embedded samples.
+            // (See src/samples.rs for the originals; numbers below are derived
+            // from the same DSP recipes.)
+            // Kick: sine, 45 Hz target, +17 semis pitch decay over 40 ms.
+            d0_wave: d_wave("Kick", 1),
+            d0_freq: d_freq("Kick", 45.0),
+            d0_ratio: d_ratio("Kick", 0.0),
+            d0_noise: d_noise("Kick", 0.0),
+            d0_pitch_env: d_pitch_env("Kick", 17.0),
+            d0_pitch_time: d_pitch_time("Kick", 40.0),
+            d0_decay: d_decay("Kick", 250.0),
+            d0_burst: d_burst("Kick", 0.0),
+            d0_level: d_level("Kick", 1.0),
+
+            // Snare: 200 Hz sine + noise.
+            d1_wave: d_wave("Snare", 1),
+            d1_freq: d_freq("Snare", 200.0),
+            d1_ratio: d_ratio("Snare", 0.0),
+            d1_noise: d_noise("Snare", 0.7),
+            d1_pitch_env: d_pitch_env("Snare", 0.0),
+            d1_pitch_time: d_pitch_time("Snare", 1.0),
+            d1_decay: d_decay("Snare", 120.0),
+            d1_burst: d_burst("Snare", 0.0),
+            d1_level: d_level("Snare", 1.0),
+
+            // Hat closed: noise only, very short decay.
+            d2_wave: d_wave("Hat Cl", 0),
+            d2_freq: d_freq("Hat Cl", 100.0),
+            d2_ratio: d_ratio("Hat Cl", 0.0),
+            d2_noise: d_noise("Hat Cl", 1.0),
+            d2_pitch_env: d_pitch_env("Hat Cl", 0.0),
+            d2_pitch_time: d_pitch_time("Hat Cl", 1.0),
+            d2_decay: d_decay("Hat Cl", 30.0),
+            d2_burst: d_burst("Hat Cl", 0.0),
+            d2_level: d_level("Hat Cl", 0.7),
+
+            // Hat open: noise only, long decay.
+            d3_wave: d_wave("Hat Op", 0),
+            d3_freq: d_freq("Hat Op", 100.0),
+            d3_ratio: d_ratio("Hat Op", 0.0),
+            d3_noise: d_noise("Hat Op", 1.0),
+            d3_pitch_env: d_pitch_env("Hat Op", 0.0),
+            d3_pitch_time: d_pitch_time("Hat Op", 1.0),
+            d3_decay: d_decay("Hat Op", 250.0),
+            d3_burst: d_burst("Hat Op", 0.0),
+            d3_level: d_level("Hat Op", 0.7),
+
+            // Tom: sine, 90 Hz target, +12 semis pitch decay over 80 ms.
+            d4_wave: d_wave("Tom", 1),
+            d4_freq: d_freq("Tom", 90.0),
+            d4_ratio: d_ratio("Tom", 0.0),
+            d4_noise: d_noise("Tom", 0.0),
+            d4_pitch_env: d_pitch_env("Tom", 12.0),
+            d4_pitch_time: d_pitch_time("Tom", 80.0),
+            d4_decay: d_decay("Tom", 300.0),
+            d4_burst: d_burst("Tom", 0.0),
+            d4_level: d_level("Tom", 1.0),
+
+            // Clap: noise + multi-attack burst.
+            d5_wave: d_wave("Clap", 0),
+            d5_freq: d_freq("Clap", 100.0),
+            d5_ratio: d_ratio("Clap", 0.0),
+            d5_noise: d_noise("Clap", 1.0),
+            d5_pitch_env: d_pitch_env("Clap", 0.0),
+            d5_pitch_time: d_pitch_time("Clap", 1.0),
+            d5_decay: d_decay("Clap", 200.0),
+            d5_burst: d_burst("Clap", 1.0),
+            d5_level: d_level("Clap", 0.8),
+
+            // Cowbell: square at 540 + 800/540 ratio second osc.
+            d6_wave: d_wave("Cowbell", 3),
+            d6_freq: d_freq("Cowbell", 540.0),
+            d6_ratio: d_ratio("Cowbell", 800.0 / 540.0),
+            d6_noise: d_noise("Cowbell", 0.0),
+            d6_pitch_env: d_pitch_env("Cowbell", 0.0),
+            d6_pitch_time: d_pitch_time("Cowbell", 1.0),
+            d6_decay: d_decay("Cowbell", 150.0),
+            d6_burst: d_burst("Cowbell", 0.0),
+            d6_level: d_level("Cowbell", 0.7),
+
+            // Zap: square sweep from very high down to 80 Hz.
+            d7_wave: d_wave("Zap", 3),
+            d7_freq: d_freq("Zap", 80.0),
+            d7_ratio: d_ratio("Zap", 0.0),
+            d7_noise: d_noise("Zap", 0.0),
+            d7_pitch_env: d_pitch_env("Zap", 50.0),
+            d7_pitch_time: d_pitch_time("Zap", 100.0),
+            d7_decay: d_decay("Zap", 250.0),
+            d7_burst: d_burst("Zap", 0.0),
+            d7_level: d_level("Zap", 1.0),
         }
     }
 }
 
-fn drum_tune(name: &str) -> FloatParam {
-    FloatParam::new(
-        &format!("{name} Tune"),
-        0.0,
-        FloatRange::Linear { min: -24.0, max: 24.0 },
-    )
-    .with_unit(" semis")
-    .with_step_size(0.1)
+fn d_wave(name: &str, default: i32) -> IntParam {
+    IntParam::new(&format!("{name} Wave"), default, IntRange::Linear { min: 0, max: 3 })
 }
 
-fn drum_decay(name: &str) -> FloatParam {
+fn d_freq(name: &str, default: f32) -> FloatParam {
     FloatParam::new(
-        &format!("{name} Decay"),
-        1.0,
-        FloatRange::Linear { min: 0.05, max: 1.5 },
+        &format!("{name} Freq"),
+        default,
+        FloatRange::Skewed { min: 20.0, max: 4000.0, factor: FloatRange::skew_factor(-2.0) },
+    )
+    .with_unit(" Hz")
+    .with_step_size(1.0)
+}
+
+fn d_ratio(name: &str, default: f32) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Ratio"),
+        default,
+        FloatRange::Linear { min: 0.0, max: 3.0 },
     )
     .with_step_size(0.01)
 }
 
-fn drum_level(name: &str) -> FloatParam {
+fn d_noise(name: &str, default: f32) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Noise"),
+        default,
+        FloatRange::Linear { min: 0.0, max: 1.0 },
+    )
+    .with_step_size(0.01)
+}
+
+fn d_pitch_env(name: &str, default: f32) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Pitch Env"),
+        default,
+        FloatRange::Linear { min: -60.0, max: 60.0 },
+    )
+    .with_unit(" semis")
+    .with_step_size(0.5)
+}
+
+fn d_pitch_time(name: &str, default_ms: f32) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Pitch Time"),
+        default_ms,
+        FloatRange::Skewed { min: 1.0, max: 1000.0, factor: FloatRange::skew_factor(-1.0) },
+    )
+    .with_unit(" ms")
+    .with_step_size(0.5)
+}
+
+fn d_decay(name: &str, default_ms: f32) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Decay"),
+        default_ms,
+        FloatRange::Skewed { min: 5.0, max: 2000.0, factor: FloatRange::skew_factor(-1.0) },
+    )
+    .with_unit(" ms")
+    .with_step_size(0.5)
+}
+
+fn d_burst(name: &str, default: f32) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Burst"),
+        default,
+        FloatRange::Linear { min: 0.0, max: 1.0 },
+    )
+    .with_step_size(0.01)
+}
+
+fn d_level(name: &str, default: f32) -> FloatParam {
     FloatParam::new(
         &format!("{name} Level"),
-        1.0,
-        FloatRange::Linear { min: 0.0, max: 1.5 },
+        default,
+        FloatRange::Linear { min: 0.0, max: 2.0 },
     )
     .with_step_size(0.01)
 }
@@ -296,49 +485,97 @@ impl SynthParams {
             octave_shift: self.octave.value(),
             drum_mode: self.drum_mode.value(),
             drum_pitch: self.drum_pitch.value(),
-            drum_tune: [
-                self.drum_tune_0.value(), self.drum_tune_1.value(),
-                self.drum_tune_2.value(), self.drum_tune_3.value(),
-                self.drum_tune_4.value(), self.drum_tune_5.value(),
-                self.drum_tune_6.value(), self.drum_tune_7.value(),
+            drum_wave: [
+                self.d0_wave.value(), self.d1_wave.value(),
+                self.d2_wave.value(), self.d3_wave.value(),
+                self.d4_wave.value(), self.d5_wave.value(),
+                self.d6_wave.value(), self.d7_wave.value(),
+            ],
+            drum_freq: [
+                self.d0_freq.value(), self.d1_freq.value(),
+                self.d2_freq.value(), self.d3_freq.value(),
+                self.d4_freq.value(), self.d5_freq.value(),
+                self.d6_freq.value(), self.d7_freq.value(),
+            ],
+            drum_ratio: [
+                self.d0_ratio.value(), self.d1_ratio.value(),
+                self.d2_ratio.value(), self.d3_ratio.value(),
+                self.d4_ratio.value(), self.d5_ratio.value(),
+                self.d6_ratio.value(), self.d7_ratio.value(),
+            ],
+            drum_noise: [
+                self.d0_noise.value(), self.d1_noise.value(),
+                self.d2_noise.value(), self.d3_noise.value(),
+                self.d4_noise.value(), self.d5_noise.value(),
+                self.d6_noise.value(), self.d7_noise.value(),
+            ],
+            drum_pitch_env: [
+                self.d0_pitch_env.value(), self.d1_pitch_env.value(),
+                self.d2_pitch_env.value(), self.d3_pitch_env.value(),
+                self.d4_pitch_env.value(), self.d5_pitch_env.value(),
+                self.d6_pitch_env.value(), self.d7_pitch_env.value(),
+            ],
+            drum_pitch_time: [
+                self.d0_pitch_time.value() / 1000.0, self.d1_pitch_time.value() / 1000.0,
+                self.d2_pitch_time.value() / 1000.0, self.d3_pitch_time.value() / 1000.0,
+                self.d4_pitch_time.value() / 1000.0, self.d5_pitch_time.value() / 1000.0,
+                self.d6_pitch_time.value() / 1000.0, self.d7_pitch_time.value() / 1000.0,
             ],
             drum_decay: [
-                self.drum_decay_0.value(), self.drum_decay_1.value(),
-                self.drum_decay_2.value(), self.drum_decay_3.value(),
-                self.drum_decay_4.value(), self.drum_decay_5.value(),
-                self.drum_decay_6.value(), self.drum_decay_7.value(),
+                self.d0_decay.value() / 1000.0, self.d1_decay.value() / 1000.0,
+                self.d2_decay.value() / 1000.0, self.d3_decay.value() / 1000.0,
+                self.d4_decay.value() / 1000.0, self.d5_decay.value() / 1000.0,
+                self.d6_decay.value() / 1000.0, self.d7_decay.value() / 1000.0,
+            ],
+            drum_burst: [
+                self.d0_burst.value(), self.d1_burst.value(),
+                self.d2_burst.value(), self.d3_burst.value(),
+                self.d4_burst.value(), self.d5_burst.value(),
+                self.d6_burst.value(), self.d7_burst.value(),
             ],
             drum_level: [
-                self.drum_level_0.value(), self.drum_level_1.value(),
-                self.drum_level_2.value(), self.drum_level_3.value(),
-                self.drum_level_4.value(), self.drum_level_5.value(),
-                self.drum_level_6.value(), self.drum_level_7.value(),
+                self.d0_level.value(), self.d1_level.value(),
+                self.d2_level.value(), self.d3_level.value(),
+                self.d4_level.value(), self.d5_level.value(),
+                self.d6_level.value(), self.d7_level.value(),
             ],
         }
     }
 
-    pub fn drum_tune(&self, i: usize) -> &FloatParam {
-        match i {
-            0 => &self.drum_tune_0, 1 => &self.drum_tune_1,
-            2 => &self.drum_tune_2, 3 => &self.drum_tune_3,
-            4 => &self.drum_tune_4, 5 => &self.drum_tune_5,
-            6 => &self.drum_tune_6, _ => &self.drum_tune_7,
-        }
+    pub fn d_wave(&self, i: usize) -> &IntParam {
+        match i { 0 => &self.d0_wave, 1 => &self.d1_wave, 2 => &self.d2_wave, 3 => &self.d3_wave,
+                  4 => &self.d4_wave, 5 => &self.d5_wave, 6 => &self.d6_wave, _ => &self.d7_wave }
     }
-    pub fn drum_decay(&self, i: usize) -> &FloatParam {
-        match i {
-            0 => &self.drum_decay_0, 1 => &self.drum_decay_1,
-            2 => &self.drum_decay_2, 3 => &self.drum_decay_3,
-            4 => &self.drum_decay_4, 5 => &self.drum_decay_5,
-            6 => &self.drum_decay_6, _ => &self.drum_decay_7,
-        }
+    pub fn d_freq(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_freq, 1 => &self.d1_freq, 2 => &self.d2_freq, 3 => &self.d3_freq,
+                  4 => &self.d4_freq, 5 => &self.d5_freq, 6 => &self.d6_freq, _ => &self.d7_freq }
     }
-    pub fn drum_level(&self, i: usize) -> &FloatParam {
-        match i {
-            0 => &self.drum_level_0, 1 => &self.drum_level_1,
-            2 => &self.drum_level_2, 3 => &self.drum_level_3,
-            4 => &self.drum_level_4, 5 => &self.drum_level_5,
-            6 => &self.drum_level_6, _ => &self.drum_level_7,
-        }
+    pub fn d_ratio(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_ratio, 1 => &self.d1_ratio, 2 => &self.d2_ratio, 3 => &self.d3_ratio,
+                  4 => &self.d4_ratio, 5 => &self.d5_ratio, 6 => &self.d6_ratio, _ => &self.d7_ratio }
+    }
+    pub fn d_noise(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_noise, 1 => &self.d1_noise, 2 => &self.d2_noise, 3 => &self.d3_noise,
+                  4 => &self.d4_noise, 5 => &self.d5_noise, 6 => &self.d6_noise, _ => &self.d7_noise }
+    }
+    pub fn d_pitch_env(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_pitch_env, 1 => &self.d1_pitch_env, 2 => &self.d2_pitch_env, 3 => &self.d3_pitch_env,
+                  4 => &self.d4_pitch_env, 5 => &self.d5_pitch_env, 6 => &self.d6_pitch_env, _ => &self.d7_pitch_env }
+    }
+    pub fn d_pitch_time(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_pitch_time, 1 => &self.d1_pitch_time, 2 => &self.d2_pitch_time, 3 => &self.d3_pitch_time,
+                  4 => &self.d4_pitch_time, 5 => &self.d5_pitch_time, 6 => &self.d6_pitch_time, _ => &self.d7_pitch_time }
+    }
+    pub fn d_decay(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_decay, 1 => &self.d1_decay, 2 => &self.d2_decay, 3 => &self.d3_decay,
+                  4 => &self.d4_decay, 5 => &self.d5_decay, 6 => &self.d6_decay, _ => &self.d7_decay }
+    }
+    pub fn d_burst(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_burst, 1 => &self.d1_burst, 2 => &self.d2_burst, 3 => &self.d3_burst,
+                  4 => &self.d4_burst, 5 => &self.d5_burst, 6 => &self.d6_burst, _ => &self.d7_burst }
+    }
+    pub fn d_level(&self, i: usize) -> &FloatParam {
+        match i { 0 => &self.d0_level, 1 => &self.d1_level, 2 => &self.d2_level, 3 => &self.d3_level,
+                  4 => &self.d4_level, 5 => &self.d5_level, 6 => &self.d6_level, _ => &self.d7_level }
     }
 }

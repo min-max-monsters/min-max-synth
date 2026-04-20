@@ -409,6 +409,157 @@ impl Sweep {
 }
 
 // ---------------------------------------------------------------------------
+// Drum voice (procedural percussion synthesizer)
+// ---------------------------------------------------------------------------
+
+/// Per-trigger parameter snapshot for `DrumVoice::tick`.
+#[derive(Debug, Clone, Copy)]
+pub struct DrumParams {
+    /// 0 = off (noise only), 1 = sine, 2 = triangle, 3 = square.
+    pub wave: i32,
+    /// Target tone frequency in Hz (after pitch envelope settles).
+    pub freq: f32,
+    /// Second tone frequency multiplier (0 disables the 2nd osc).
+    pub ratio: f32,
+    /// Noise mix amount, 0..1.
+    pub noise: f32,
+    /// Pitch offset in semitones at trigger time.
+    pub pitch_env: f32,
+    /// Time constant in seconds for the pitch offset's exponential decay.
+    pub pitch_time: f32,
+    /// Time constant in seconds for the amplitude envelope.
+    pub decay: f32,
+    /// 0..1 amount of multi-attack (clap-style retriggers).
+    pub burst: f32,
+    /// Output level multiplier.
+    pub level: f32,
+}
+
+/// Self-contained percussion voice: tone osc(s) + noise + pitch and
+/// amplitude envelopes. Designed to be able to recreate every built-in drum
+/// sample purely from parameters.
+#[derive(Debug, Clone)]
+pub struct DrumVoice {
+    active: bool,
+    elapsed: f32,
+    phase1: f32,
+    phase2: f32,
+    lfsr: u16,
+    burst_offsets: [f32; 4],
+    burst_count: usize,
+}
+
+impl Default for DrumVoice {
+    fn default() -> Self {
+        Self {
+            active: false,
+            elapsed: 0.0,
+            phase1: 0.0,
+            phase2: 0.0,
+            lfsr: 0xACE1,
+            burst_offsets: [0.0; 4],
+            burst_count: 1,
+        }
+    }
+}
+
+impl DrumVoice {
+    pub fn trigger(&mut self, burst: f32) {
+        self.active = true;
+        self.elapsed = 0.0;
+        self.phase1 = 0.0;
+        self.phase2 = 0.0;
+        self.lfsr = 0xACE1;
+        // burst 0 -> 1 onset, burst 1 -> 4 onsets ~12-15ms apart.
+        let count = (1.0 + burst.clamp(0.0, 1.0) * 3.0).round() as usize;
+        self.burst_count = count.clamp(1, 4);
+        for i in 0..self.burst_count {
+            // Slight jitter so it sounds like hands, not metronome.
+            self.burst_offsets[i] = i as f32 * 0.012 + i as f32 * 0.003 * burst;
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    #[inline]
+    fn osc(phase: f32, w: i32) -> f32 {
+        match w {
+            0 => 0.0,
+            1 => (phase * TAU).sin(),
+            2 => 1.0 - 4.0 * (phase - 0.5).abs(),
+            _ => if phase < 0.5 { 1.0 } else { -1.0 },
+        }
+    }
+
+    #[inline]
+    pub fn tick(&mut self, dp: &DrumParams, sample_rate: f32) -> f32 {
+        if !self.active {
+            return 0.0;
+        }
+        let t = self.elapsed;
+        self.elapsed += 1.0 / sample_rate;
+
+        // Pitch envelope: pitch_off = pitch_env * exp(-t / pitch_time).
+        let pt = dp.pitch_time.max(0.0001);
+        let pitch_off = dp.pitch_env * (-t / pt).exp();
+        let nyq = sample_rate * 0.45;
+        let freq = (dp.freq * (2.0_f32).powf(pitch_off / 12.0)).clamp(1.0, nyq);
+
+        // Tone(s)
+        let tone = if dp.wave == 0 {
+            0.0
+        } else {
+            let t1 = Self::osc(self.phase1, dp.wave);
+            self.phase1 += freq / sample_rate;
+            if self.phase1 >= 1.0 {
+                self.phase1 -= 1.0;
+            }
+            let t2 = if dp.ratio > 0.001 {
+                let f2 = (freq * dp.ratio).clamp(1.0, nyq);
+                let v = Self::osc(self.phase2, dp.wave);
+                self.phase2 += f2 / sample_rate;
+                if self.phase2 >= 1.0 {
+                    self.phase2 -= 1.0;
+                }
+                v * 0.7
+            } else {
+                0.0
+            };
+            t1 + t2
+        };
+
+        // Noise via 15-bit LFSR (same shape as samples.rs).
+        let bit = ((self.lfsr ^ (self.lfsr >> 1)) & 1) as u16;
+        self.lfsr = (self.lfsr >> 1) | (bit << 14);
+        let noise = if (self.lfsr & 1) == 0 { 1.0 } else { -1.0 };
+
+        let mix = tone + noise * dp.noise;
+
+        // Amplitude envelope = sum of exponential decays at burst onsets.
+        let decay_s = dp.decay.max(0.001);
+        let mut env = 0.0_f32;
+        for i in 0..self.burst_count {
+            let dt = t - self.burst_offsets[i];
+            if dt >= 0.0 {
+                let scale = 1.0 - i as f32 * 0.15;
+                env += scale * (-dt / decay_s).exp();
+            }
+        }
+
+        // Auto-deactivate once well past the last burst and amplitude is
+        // negligible. Saves CPU for one-shot voices.
+        let last_onset = self.burst_offsets[self.burst_count.saturating_sub(1)];
+        if t > last_onset + decay_s * 8.0 && env < 0.0005 {
+            self.active = false;
+        }
+
+        mix * env * dp.level
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bitcrusher
 // ---------------------------------------------------------------------------
 

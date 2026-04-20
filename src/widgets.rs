@@ -226,6 +226,230 @@ impl<P: Param> egui::Widget for Knob<'_, P> {
     }
 }
 
+/// A vertical slider bound to a NIH-plug parameter. Top label, fader track in
+/// the middle, value text at the bottom. Same drag/scroll/double-click idioms
+/// as `Knob`.
+pub struct VSlider<'a, P: Param> {
+    param: &'a P,
+    setter: &'a ParamSetter<'a>,
+    label: Option<&'a str>,
+    height: f32,
+    width: f32,
+    accent: Color32,
+}
+
+impl<'a, P: Param> VSlider<'a, P> {
+    pub fn new(param: &'a P, setter: &'a ParamSetter<'a>) -> Self {
+        Self {
+            param,
+            setter,
+            label: None,
+            height: 120.0,
+            width: 28.0,
+            accent: palette::ACCENT,
+        }
+    }
+
+    pub fn with_label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    pub fn with_height(mut self, h: f32) -> Self {
+        self.height = h;
+        self
+    }
+
+    pub fn with_accent(mut self, c: Color32) -> Self {
+        self.accent = c;
+        self
+    }
+
+    fn set_normalized(&self, n: f32) {
+        let n = n.clamp(0.0, 1.0);
+        let v = self.param.preview_plain(n);
+        self.setter.set_parameter(self.param, v);
+    }
+
+    fn show(self, ui: &mut Ui) -> Response {
+        let label_h = if self.label.is_some() { 14.0 } else { 0.0 };
+        let value_h = 14.0;
+        let total = vec2(self.width.max(36.0), label_h + self.height + value_h + 8.0);
+        let (rect, mut resp) = ui.allocate_exact_size(total, Sense::click_and_drag());
+
+        let mut cursor_y = rect.min.y;
+        let label_rect = Rect::from_min_size(
+            Pos2::new(rect.min.x, cursor_y),
+            vec2(rect.width(), label_h),
+        );
+        cursor_y += label_h + 2.0;
+        let track_rect = Rect::from_min_size(
+            Pos2::new(rect.center().x - self.width * 0.5, cursor_y),
+            vec2(self.width, self.height),
+        );
+        let value_rect = Rect::from_min_size(
+            Pos2::new(rect.min.x, track_rect.max.y + 2.0),
+            vec2(rect.width(), value_h),
+        );
+
+        if resp.drag_started() {
+            self.setter.begin_set_parameter(self.param);
+            let id = resp.id;
+            ui.memory_mut(|m| {
+                m.data
+                    .insert_temp(id, self.param.modulated_normalized_value())
+            });
+        }
+        if resp.dragged() {
+            let id = resp.id;
+            let start: f32 = ui
+                .memory(|m| m.data.get_temp(id))
+                .unwrap_or_else(|| self.param.modulated_normalized_value());
+            let drag_total = -resp.drag_delta().y;
+            let pixels_for_full = if ui.input(|i| i.modifiers.shift) {
+                DRAG_PIXELS_FOR_FULL_RANGE_FINE
+            } else {
+                self.height.max(60.0)
+            };
+            let acc_id = id.with("acc");
+            let acc: f32 = ui.memory(|m| m.data.get_temp(acc_id)).unwrap_or(0.0);
+            let new_acc = acc + drag_total;
+            ui.memory_mut(|m| m.data.insert_temp(acc_id, new_acc));
+            let n = (start + new_acc / pixels_for_full).clamp(0.0, 1.0);
+            self.set_normalized(n);
+            resp.mark_changed();
+        }
+        if resp.drag_stopped() {
+            let id = resp.id;
+            ui.memory_mut(|m| {
+                m.data.remove::<f32>(id);
+                m.data.remove::<f32>(id.with("acc"));
+            });
+            self.setter.end_set_parameter(self.param);
+        }
+        if resp.double_clicked() || (resp.clicked() && ui.input(|i| i.modifiers.command)) {
+            self.setter.begin_set_parameter(self.param);
+            self.set_normalized(self.param.default_normalized_value());
+            self.setter.end_set_parameter(self.param);
+            resp.mark_changed();
+        }
+        if resp.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                let step = if ui.input(|i| i.modifiers.shift) { 0.005 } else { 0.02 };
+                let n = (self.param.modulated_normalized_value() + scroll.signum() * step)
+                    .clamp(0.0, 1.0);
+                self.setter.begin_set_parameter(self.param);
+                self.set_normalized(n);
+                self.setter.end_set_parameter(self.param);
+                resp.mark_changed();
+            }
+        }
+
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter_at(rect);
+
+            if let Some(label) = self.label {
+                painter.text(
+                    label_rect.center(),
+                    Align2::CENTER_CENTER,
+                    label,
+                    FontId::proportional(11.0),
+                    palette::TEXT_DIM,
+                );
+            }
+
+            // Track plate.
+            painter.rect_filled(track_rect, 3.0, palette::BG_PANEL_HI);
+            painter.rect_stroke(
+                track_rect,
+                3.0,
+                Stroke::new(1.0, palette::BORDER),
+                egui::StrokeKind::Inside,
+            );
+
+            // Centre groove.
+            let groove_w = 4.0;
+            let groove = Rect::from_min_size(
+                Pos2::new(track_rect.center().x - groove_w * 0.5, track_rect.min.y + 4.0),
+                vec2(groove_w, track_rect.height() - 8.0),
+            );
+            painter.rect_filled(groove, 2.0, palette::TRACK);
+
+            // Tick marks.
+            let ticks = 5;
+            for i in 0..=ticks {
+                let t = i as f32 / ticks as f32;
+                let y = track_rect.max.y - 4.0 - (track_rect.height() - 8.0) * t;
+                let x0 = track_rect.min.x + 4.0;
+                let x1 = track_rect.min.x + 8.0;
+                painter.line_segment(
+                    [Pos2::new(x0, y), Pos2::new(x1, y)],
+                    Stroke::new(1.0, palette::BORDER),
+                );
+                let x2 = track_rect.max.x - 8.0;
+                let x3 = track_rect.max.x - 4.0;
+                painter.line_segment(
+                    [Pos2::new(x2, y), Pos2::new(x3, y)],
+                    Stroke::new(1.0, palette::BORDER),
+                );
+            }
+
+            // Filled portion + cap.
+            let n = self.param.modulated_normalized_value();
+            let cap_y = track_rect.max.y - 4.0 - (track_rect.height() - 8.0) * n;
+            let fill_rect = Rect::from_min_max(
+                Pos2::new(groove.min.x, cap_y),
+                Pos2::new(groove.max.x, track_rect.max.y - 4.0),
+            );
+            painter.rect_filled(fill_rect, 2.0, self.accent);
+
+            // Cap (the fader handle).
+            let cap_w = self.width - 6.0;
+            let cap_h = 8.0;
+            let cap_rect = Rect::from_min_size(
+                Pos2::new(track_rect.center().x - cap_w * 0.5, cap_y - cap_h * 0.5),
+                vec2(cap_w, cap_h),
+            );
+            painter.rect_filled(cap_rect, 2.0, palette::TEXT);
+            painter.rect_stroke(
+                cap_rect,
+                2.0,
+                Stroke::new(1.0, palette::BG_DEEP),
+                egui::StrokeKind::Inside,
+            );
+            // Centre line on cap.
+            painter.line_segment(
+                [
+                    Pos2::new(cap_rect.min.x + 2.0, cap_rect.center().y),
+                    Pos2::new(cap_rect.max.x - 2.0, cap_rect.center().y),
+                ],
+                Stroke::new(1.0, palette::BG_DEEP),
+            );
+
+            painter.text(
+                value_rect.center(),
+                Align2::CENTER_CENTER,
+                self.param.to_string(),
+                FontId::monospace(10.0),
+                palette::TEXT,
+            );
+        }
+
+        resp.on_hover_text(format!(
+            "{}: {}\nDrag to adjust  •  Shift = fine  •  Double-click to reset",
+            self.param.name(),
+            self.param.to_string()
+        ))
+    }
+}
+
+impl<P: Param> egui::Widget for VSlider<'_, P> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
 fn paint_arc(
     painter: &egui::Painter,
     center: Pos2,

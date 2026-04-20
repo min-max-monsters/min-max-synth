@@ -2,10 +2,9 @@
 //! optional sample playback. Created once and recycled by the voice pool.
 
 use crate::dsp::{
-    midi_to_hz, Adsr, FmOsc, Lfo, NoiseOsc, PulseOsc, SawOsc, Sweep, TriangleOsc,
-    Waveform, WaveOsc,
+    midi_to_hz, Adsr, DrumParams, DrumVoice, FmOsc, Lfo, NoiseOsc, PulseOsc, SawOsc, Sweep,
+    TriangleOsc, Waveform, WaveOsc,
 };
-use crate::samples::{DrumKind, SamplePlayer};
 
 /// Snapshot of synth parameters seen by the voice for a render block.
 /// The voice never touches `nih-plug`'s `Params` directly.
@@ -35,8 +34,14 @@ pub struct VoiceParams {
     pub octave_shift: i32,
     pub drum_mode: bool,
     pub drum_pitch: bool,
-    pub drum_tune: [f32; 8],
+    pub drum_wave: [i32; 8],
+    pub drum_freq: [f32; 8],
+    pub drum_ratio: [f32; 8],
+    pub drum_noise: [f32; 8],
+    pub drum_pitch_env: [f32; 8],
+    pub drum_pitch_time: [f32; 8],
     pub drum_decay: [f32; 8],
+    pub drum_burst: [f32; 8],
     pub drum_level: [f32; 8],
 }
 
@@ -65,7 +70,8 @@ pub struct Voice {
     sweep: Sweep,
 
     // Sample playback (drum mode)
-    sample: SamplePlayer,
+    drum: DrumVoice,
+    drum_pitch_mult: f32,
     is_drum: bool,
     drum_idx: usize,
 }
@@ -88,7 +94,8 @@ impl Voice {
             vibrato: Lfo::default(),
             duty_lfo: Lfo::default(),
             sweep: Sweep::default(),
-            sample: SamplePlayer::default(),
+            drum: DrumVoice::default(),
+            drum_pitch_mult: 1.0,
             is_drum: false,
             drum_idx: 0,
         }
@@ -100,7 +107,7 @@ impl Voice {
     }
 
     pub fn is_active(&self) -> bool {
-        self.env.is_active() || self.sample.is_active()
+        self.env.is_active() || self.drum.is_active()
     }
 
     pub fn note(&self) -> Option<u8> {
@@ -128,20 +135,18 @@ impl Voice {
 
         if params.drum_mode {
             self.is_drum = true;
-            // Map note to a drum kind: lowest 8 white-ish keys above C2 (36).
-            let idx = ((note as i32 - 36).rem_euclid(DrumKind::ALL.len() as i32)) as usize;
-            let kind = DrumKind::ALL[idx];
+            // Map note to one of 8 drum slots: lowest 8 keys above C2 (36).
+            let idx = ((note as i32 - 36).rem_euclid(8)) as usize;
             self.drum_idx = idx;
-            let pitch_rate = if params.drum_pitch {
+            self.drum_pitch_mult = if params.drum_pitch {
                 // ±2 octaves around the mapped key (centred on C3 = 48).
                 let semis = note as f32 - 48.0;
                 (2.0_f32).powf(semis / 12.0)
             } else {
                 1.0
             };
-            let tune_rate = (2.0_f32).powf(params.drum_tune[idx] / 12.0);
-            self.sample.trigger(kind, pitch_rate * tune_rate);
-            // Use a tiny percussive envelope so velocity scales sample.
+            self.drum.trigger(params.drum_burst[idx]);
+            // Drum voice uses its own envelope; bypass ADSR.
             self.env.attack = 0.0;
             self.env.decay = 0.0;
             self.env.sustain = 1.0;
@@ -184,25 +189,31 @@ impl Voice {
     #[inline]
     pub fn tick(&mut self, params: &VoiceParams) -> f32 {
         let Some(note) = self.note else { return 0.0 };
-        let env = self.env.tick();
-        if !self.env.is_active() && !self.sample.is_active() {
-            self.note = None;
-            return 0.0;
-        }
 
         if self.is_drum {
-            // Decay shapes how much extra exponential decay is applied on top.
-            // 1.0 = neutral (no extra), 0.05 = very fast cut.
-            let d = params.drum_decay[self.drum_idx].clamp(0.05, 1.5);
-            let extra = if d >= 1.0 {
-                1.0
-            } else {
-                let t = self.elapsed_samples as f32 / self.sample_rate;
-                self.elapsed_samples = self.elapsed_samples.saturating_add(1);
-                (-t * (1.0 - d) * 30.0).exp()
+            let i = self.drum_idx;
+            let dp = DrumParams {
+                wave: params.drum_wave[i],
+                freq: params.drum_freq[i] * self.drum_pitch_mult,
+                ratio: params.drum_ratio[i],
+                noise: params.drum_noise[i],
+                pitch_env: params.drum_pitch_env[i],
+                pitch_time: params.drum_pitch_time[i],
+                decay: params.drum_decay[i],
+                burst: params.drum_burst[i],
+                level: params.drum_level[i],
             };
-            let level = params.drum_level[self.drum_idx];
-            return self.sample.tick(self.sample_rate) * self.velocity * level * extra;
+            let v = self.drum.tick(&dp, self.sample_rate) * self.velocity;
+            if !self.drum.is_active() {
+                self.note = None;
+            }
+            return v;
+        }
+
+        let env = self.env.tick();
+        if !self.env.is_active() {
+            self.note = None;
+            return 0.0;
         }
 
         // Pitch chain: base note + octave + fine + vibrato + sweep.

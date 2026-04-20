@@ -4,7 +4,7 @@
 use crate::params::{SynthParams, WaveChoice};
 use crate::presets::{apply_preset_with_setter, PRESET_NAMES};
 use crate::samples::DrumKind;
-use crate::widgets::{apply_style, led_toggle, palette, panel, Knob};
+use crate::widgets::{apply_style, led_toggle, palette, panel, Knob, VSlider};
 use crate::GuiNoteEvent;
 use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::{Editor, ParamSetter};
@@ -119,6 +119,8 @@ fn draw_header(
                     }
                 });
             ui.label(RichText::new("PRESET").color(palette::TEXT_DIM).size(11.0));
+            ui.add_space(12.0);
+            led_toggle(ui, &params.drum_mode, setter, "DRUM MODE");
         });
     });
     ui.add_space(2.0);
@@ -130,6 +132,14 @@ fn draw_header(
 }
 
 fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mut EditorState) {
+    if params.drum_mode.value() {
+        draw_drum_main(ui, params, setter, state);
+    } else {
+        draw_synth_main(ui, params, setter);
+    }
+}
+
+fn draw_synth_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
     ui.horizontal_top(|ui| {
         // Left column: oscillator + amp.
         ui.vertical(|ui| {
@@ -175,24 +185,6 @@ fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mu
                 ui.add_space(2.0);
                 draw_adsr_visual(ui, params);
             });
-            ui.add_space(6.0);
-            panel(ui, "DRUMS", palette::RED, |ui| {
-                ui.horizontal(|ui| {
-                    led_toggle(ui, &params.drum_mode, setter, "Enabled");
-                    led_toggle(ui, &params.drum_pitch, setter, "Pitch tracks");
-                });
-                ui.add_space(4.0);
-                draw_drum_selector(ui, state);
-                ui.add_space(4.0);
-                let i = state.selected_drum;
-                ui.horizontal(|ui| {
-                    ui.add(Knob::new(params.drum_tune(i), setter).with_label("TUNE"));
-                    ui.add(Knob::new(params.drum_decay(i), setter).with_label("DECAY"));
-                    ui.add(Knob::new(params.drum_level(i), setter).with_label("LEVEL"));
-                });
-                ui.add_space(2.0);
-                draw_drum_legend(ui);
-            });
         });
 
         ui.add_space(8.0);
@@ -223,6 +215,93 @@ fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mu
             ui.add_space(6.0);
             panel(ui, "BITCRUSH", palette::ACCENT, |ui| {
                 ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.bit_depth, setter).with_label("BITS"));
+                    ui.add(Knob::new(&params.bit_rate, setter).with_label("RATE"));
+                });
+            });
+        });
+    });
+}
+
+fn draw_drum_main(
+    ui: &mut Ui,
+    params: &SynthParams,
+    setter: &ParamSetter,
+    state: &mut EditorState,
+) {
+    ui.horizontal_top(|ui| {
+        // Left: 8-channel mixer. Each strip is a vertical level fader plus a
+        // selector button below it. The selected strip is highlighted with the
+        // accent colour.
+        ui.vertical(|ui| {
+            panel(ui, "DRUM MIXER", palette::RED, |ui| {
+                ui.horizontal(|ui| {
+                    led_toggle(ui, &params.drum_pitch, setter, "Pitch tracks key");
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    for (i, d) in DrumKind::ALL.iter().enumerate() {
+                        let selected = state.selected_drum == i;
+                        ui.vertical(|ui| {
+                            let accent = if selected { palette::ACCENT } else { palette::ACCENT_DIM };
+                            ui.add(
+                                VSlider::new(params.d_level(i), setter)
+                                    .with_label(d.label())
+                                    .with_height(140.0)
+                                    .with_accent(accent),
+                            );
+                            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+                            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+                            let btn = egui::Button::new(
+                                RichText::new(format!("{}", i + 1))
+                                    .color(fg)
+                                    .monospace()
+                                    .size(11.0),
+                            )
+                            .fill(bg)
+                            .stroke(Stroke::new(1.0, palette::BORDER))
+                            .min_size(egui::vec2(36.0, 18.0));
+                            if ui.add(btn).clicked() {
+                                state.selected_drum = i;
+                            }
+                        });
+                        ui.add_space(2.0);
+                    }
+                });
+                ui.add_space(2.0);
+                draw_drum_legend(ui);
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Right: bespoke synth controls for the selected drum + bus FX.
+        ui.vertical(|ui| {
+            let i = state.selected_drum;
+            let title = format!(
+                "DRUM {} · {}",
+                i + 1,
+                DrumKind::ALL[i].label()
+            );
+            panel(ui, &title, palette::ACCENT, |ui| {
+                draw_drum_wave_picker(ui, params, setter, i);
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(params.d_freq(i), setter).with_label("FREQ"));
+                    ui.add(Knob::new(params.d_ratio(i), setter).with_label("RATIO"));
+                    ui.add(Knob::new(params.d_noise(i), setter).with_label("NOISE"));
+                    ui.add(Knob::new(params.d_burst(i), setter).with_label("BURST"));
+                });
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(params.d_pitch_env(i), setter).with_label("P.ENV"));
+                    ui.add(Knob::new(params.d_pitch_time(i), setter).with_label("P.TIME"));
+                    ui.add(Knob::new(params.d_decay(i), setter).with_label("DECAY"));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "BUS", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.gain, setter).with_label("GAIN").with_diameter(54.0));
                     ui.add(Knob::new(&params.bit_depth, setter).with_label("BITS"));
                     ui.add(Knob::new(&params.bit_rate, setter).with_label("RATE"));
                 });
@@ -301,18 +380,24 @@ fn draw_adsr_visual(ui: &mut Ui, params: &SynthParams) {
     painter.add(egui::Shape::line(pts, Stroke::new(1.5, palette::ACCENT)));
 }
 
-fn draw_drum_selector(ui: &mut Ui, state: &mut EditorState) {
-    ui.horizontal_wrapped(|ui| {
-        for (i, d) in DrumKind::ALL.iter().enumerate() {
-            let selected = state.selected_drum == i;
+fn draw_drum_wave_picker(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, i: usize) {
+    let labels = ["OFF", "SINE", "TRI", "SQR"];
+    let param = params.d_wave(i);
+    let current = param.value();
+    ui.horizontal(|ui| {
+        for (v, label) in labels.iter().enumerate() {
+            let v = v as i32;
+            let selected = current == v;
             let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
             let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
-            let btn = egui::Button::new(RichText::new(d.label()).color(fg).monospace().size(11.0))
+            let btn = egui::Button::new(RichText::new(*label).color(fg).monospace().size(11.0))
                 .fill(bg)
                 .stroke(Stroke::new(1.0, palette::BORDER))
-                .min_size(egui::vec2(64.0, 20.0));
+                .min_size(egui::vec2(48.0, 20.0));
             if ui.add(btn).clicked() {
-                state.selected_drum = i;
+                setter.begin_set_parameter(param);
+                setter.set_parameter(param, v);
+                setter.end_set_parameter(param);
             }
         }
     });
