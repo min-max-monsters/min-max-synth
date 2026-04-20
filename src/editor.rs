@@ -28,11 +28,12 @@ pub struct EditorState {
     pressed: [bool; 128],
     base_note: i32,
     selected_preset: usize,
+    selected_drum: usize,
 }
 
 impl Default for EditorState {
     fn default() -> Self {
-        Self { pressed: [false; 128], base_note: 60, selected_preset: 0 }
+        Self { pressed: [false; 128], base_note: 60, selected_preset: 0, selected_drum: 0 }
     }
 }
 
@@ -74,7 +75,7 @@ pub fn create_editor(
             egui::CentralPanel::default()
                 .frame(main_frame)
                 .show(ctx, |ui| {
-                    draw_main(ui, &params, setter);
+                    draw_main(ui, &params, setter, state);
                 });
         },
     )
@@ -124,7 +125,7 @@ fn draw_header(
     );
 }
 
-fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mut EditorState) {
     ui.horizontal_top(|ui| {
         // Left column: oscillator + amp.
         ui.vertical(|ui| {
@@ -177,6 +178,15 @@ fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                     led_toggle(ui, &params.drum_pitch, setter, "Pitch tracks");
                 });
                 ui.add_space(4.0);
+                draw_drum_selector(ui, state);
+                ui.add_space(4.0);
+                let i = state.selected_drum;
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(params.drum_tune(i), setter).with_label("TUNE"));
+                    ui.add(Knob::new(params.drum_decay(i), setter).with_label("DECAY"));
+                    ui.add(Knob::new(params.drum_level(i), setter).with_label("LEVEL"));
+                });
+                ui.add_space(2.0);
                 draw_drum_legend(ui);
             });
         });
@@ -285,6 +295,23 @@ fn draw_adsr_visual(ui: &mut Ui, params: &SynthParams) {
         Stroke::NONE,
     ));
     painter.add(egui::Shape::line(pts, Stroke::new(1.5, palette::ACCENT)));
+}
+
+fn draw_drum_selector(ui: &mut Ui, state: &mut EditorState) {
+    ui.horizontal_wrapped(|ui| {
+        for (i, d) in DrumKind::ALL.iter().enumerate() {
+            let selected = state.selected_drum == i;
+            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+            let btn = egui::Button::new(RichText::new(d.label()).color(fg).monospace().size(11.0))
+                .fill(bg)
+                .stroke(Stroke::new(1.0, palette::BORDER))
+                .min_size(egui::vec2(64.0, 20.0));
+            if ui.add(btn).clicked() {
+                state.selected_drum = i;
+            }
+        }
+    });
 }
 
 fn draw_drum_legend(ui: &mut Ui) {

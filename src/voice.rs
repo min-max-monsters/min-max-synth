@@ -35,6 +35,9 @@ pub struct VoiceParams {
     pub octave_shift: i32,
     pub drum_mode: bool,
     pub drum_pitch: bool,
+    pub drum_tune: [f32; 8],
+    pub drum_decay: [f32; 8],
+    pub drum_level: [f32; 8],
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +67,7 @@ pub struct Voice {
     // Sample playback (drum mode)
     sample: SamplePlayer,
     is_drum: bool,
+    drum_idx: usize,
 }
 
 impl Voice {
@@ -86,6 +90,7 @@ impl Voice {
             sweep: Sweep::default(),
             sample: SamplePlayer::default(),
             is_drum: false,
+            drum_idx: 0,
         }
     }
 
@@ -126,14 +131,16 @@ impl Voice {
             // Map note to a drum kind: lowest 8 white-ish keys above C2 (36).
             let idx = ((note as i32 - 36).rem_euclid(DrumKind::ALL.len() as i32)) as usize;
             let kind = DrumKind::ALL[idx];
-            let rate = if params.drum_pitch {
+            self.drum_idx = idx;
+            let pitch_rate = if params.drum_pitch {
                 // ±2 octaves around the mapped key (centred on C3 = 48).
                 let semis = note as f32 - 48.0;
                 (2.0_f32).powf(semis / 12.0)
             } else {
                 1.0
             };
-            self.sample.trigger(kind, rate);
+            let tune_rate = (2.0_f32).powf(params.drum_tune[idx] / 12.0);
+            self.sample.trigger(kind, pitch_rate * tune_rate);
             // Use a tiny percussive envelope so velocity scales sample.
             self.env.attack = 0.0;
             self.env.decay = 0.0;
@@ -184,7 +191,18 @@ impl Voice {
         }
 
         if self.is_drum {
-            return self.sample.tick(self.sample_rate) * self.velocity;
+            // Decay shapes how much extra exponential decay is applied on top.
+            // 1.0 = neutral (no extra), 0.05 = very fast cut.
+            let d = params.drum_decay[self.drum_idx].clamp(0.05, 1.5);
+            let extra = if d >= 1.0 {
+                1.0
+            } else {
+                let t = self.elapsed_samples as f32 / self.sample_rate;
+                self.elapsed_samples = self.elapsed_samples.saturating_add(1);
+                (-t * (1.0 - d) * 30.0).exp()
+            };
+            let level = params.drum_level[self.drum_idx];
+            return self.sample.tick(self.sample_rate) * self.velocity * level * extra;
         }
 
         // Pitch chain: base note + octave + fine + vibrato + sweep.

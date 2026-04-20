@@ -110,6 +110,32 @@ pub struct SynthParams {
     pub drum_mode: BoolParam,
     #[id = "drum_p"]
     pub drum_pitch: BoolParam,
+
+    // Per-drum tweaks: tune (semitones), decay (0..1, 1 = natural), level (0..1).
+    #[id = "dr0_t"] pub drum_tune_0: FloatParam,
+    #[id = "dr0_d"] pub drum_decay_0: FloatParam,
+    #[id = "dr0_l"] pub drum_level_0: FloatParam,
+    #[id = "dr1_t"] pub drum_tune_1: FloatParam,
+    #[id = "dr1_d"] pub drum_decay_1: FloatParam,
+    #[id = "dr1_l"] pub drum_level_1: FloatParam,
+    #[id = "dr2_t"] pub drum_tune_2: FloatParam,
+    #[id = "dr2_d"] pub drum_decay_2: FloatParam,
+    #[id = "dr2_l"] pub drum_level_2: FloatParam,
+    #[id = "dr3_t"] pub drum_tune_3: FloatParam,
+    #[id = "dr3_d"] pub drum_decay_3: FloatParam,
+    #[id = "dr3_l"] pub drum_level_3: FloatParam,
+    #[id = "dr4_t"] pub drum_tune_4: FloatParam,
+    #[id = "dr4_d"] pub drum_decay_4: FloatParam,
+    #[id = "dr4_l"] pub drum_level_4: FloatParam,
+    #[id = "dr5_t"] pub drum_tune_5: FloatParam,
+    #[id = "dr5_d"] pub drum_decay_5: FloatParam,
+    #[id = "dr5_l"] pub drum_level_5: FloatParam,
+    #[id = "dr6_t"] pub drum_tune_6: FloatParam,
+    #[id = "dr6_d"] pub drum_decay_6: FloatParam,
+    #[id = "dr6_l"] pub drum_level_6: FloatParam,
+    #[id = "dr7_t"] pub drum_tune_7: FloatParam,
+    #[id = "dr7_d"] pub drum_decay_7: FloatParam,
+    #[id = "dr7_l"] pub drum_level_7: FloatParam,
 }
 
 impl Default for SynthParams {
@@ -191,8 +217,45 @@ impl Default for SynthParams {
 
             drum_mode: BoolParam::new("Drum Mode", false),
             drum_pitch: BoolParam::new("Drum Pitch Tracks Note", true),
+
+            drum_tune_0: drum_tune("Kick"),    drum_decay_0: drum_decay("Kick"),    drum_level_0: drum_level("Kick"),
+            drum_tune_1: drum_tune("Snare"),   drum_decay_1: drum_decay("Snare"),   drum_level_1: drum_level("Snare"),
+            drum_tune_2: drum_tune("Hat Cl"),  drum_decay_2: drum_decay("Hat Cl"),  drum_level_2: drum_level("Hat Cl"),
+            drum_tune_3: drum_tune("Hat Op"),  drum_decay_3: drum_decay("Hat Op"),  drum_level_3: drum_level("Hat Op"),
+            drum_tune_4: drum_tune("Tom"),     drum_decay_4: drum_decay("Tom"),     drum_level_4: drum_level("Tom"),
+            drum_tune_5: drum_tune("Clap"),    drum_decay_5: drum_decay("Clap"),    drum_level_5: drum_level("Clap"),
+            drum_tune_6: drum_tune("Cowbell"), drum_decay_6: drum_decay("Cowbell"), drum_level_6: drum_level("Cowbell"),
+            drum_tune_7: drum_tune("Zap"),     drum_decay_7: drum_decay("Zap"),     drum_level_7: drum_level("Zap"),
         }
     }
+}
+
+fn drum_tune(name: &str) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Tune"),
+        0.0,
+        FloatRange::Linear { min: -24.0, max: 24.0 },
+    )
+    .with_unit(" semis")
+    .with_step_size(0.1)
+}
+
+fn drum_decay(name: &str) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Decay"),
+        1.0,
+        FloatRange::Linear { min: 0.05, max: 1.5 },
+    )
+    .with_step_size(0.01)
+}
+
+fn drum_level(name: &str) -> FloatParam {
+    FloatParam::new(
+        &format!("{name} Level"),
+        1.0,
+        FloatRange::Linear { min: 0.0, max: 1.5 },
+    )
+    .with_step_size(0.01)
 }
 
 fn ms(name: &str, default: f32, min: f32, max: f32) -> FloatParam {
@@ -233,6 +296,49 @@ impl SynthParams {
             octave_shift: self.octave.value(),
             drum_mode: self.drum_mode.value(),
             drum_pitch: self.drum_pitch.value(),
+            drum_tune: [
+                self.drum_tune_0.value(), self.drum_tune_1.value(),
+                self.drum_tune_2.value(), self.drum_tune_3.value(),
+                self.drum_tune_4.value(), self.drum_tune_5.value(),
+                self.drum_tune_6.value(), self.drum_tune_7.value(),
+            ],
+            drum_decay: [
+                self.drum_decay_0.value(), self.drum_decay_1.value(),
+                self.drum_decay_2.value(), self.drum_decay_3.value(),
+                self.drum_decay_4.value(), self.drum_decay_5.value(),
+                self.drum_decay_6.value(), self.drum_decay_7.value(),
+            ],
+            drum_level: [
+                self.drum_level_0.value(), self.drum_level_1.value(),
+                self.drum_level_2.value(), self.drum_level_3.value(),
+                self.drum_level_4.value(), self.drum_level_5.value(),
+                self.drum_level_6.value(), self.drum_level_7.value(),
+            ],
+        }
+    }
+
+    pub fn drum_tune(&self, i: usize) -> &FloatParam {
+        match i {
+            0 => &self.drum_tune_0, 1 => &self.drum_tune_1,
+            2 => &self.drum_tune_2, 3 => &self.drum_tune_3,
+            4 => &self.drum_tune_4, 5 => &self.drum_tune_5,
+            6 => &self.drum_tune_6, _ => &self.drum_tune_7,
+        }
+    }
+    pub fn drum_decay(&self, i: usize) -> &FloatParam {
+        match i {
+            0 => &self.drum_decay_0, 1 => &self.drum_decay_1,
+            2 => &self.drum_decay_2, 3 => &self.drum_decay_3,
+            4 => &self.drum_decay_4, 5 => &self.drum_decay_5,
+            6 => &self.drum_decay_6, _ => &self.drum_decay_7,
+        }
+    }
+    pub fn drum_level(&self, i: usize) -> &FloatParam {
+        match i {
+            0 => &self.drum_level_0, 1 => &self.drum_level_1,
+            2 => &self.drum_level_2, 3 => &self.drum_level_3,
+            4 => &self.drum_level_4, 5 => &self.drum_level_5,
+            6 => &self.drum_level_6, _ => &self.drum_level_7,
         }
     }
 }
