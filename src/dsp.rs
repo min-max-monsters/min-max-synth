@@ -384,7 +384,9 @@ impl Lfo {
     }
 }
 
-/// Linear pitch sweep in semitones over the sweep time. Positive = up.
+/// "Auto bend": at note-on, the pitch starts offset by `semitones` and
+/// linearly returns to 0 over `time_s`. Negative `semitones` bends up to
+/// pitch from below; positive bends down. Set `time_s = 0` to disable.
 #[derive(Debug, Default, Clone)]
 pub struct Sweep {
     elapsed: f32,
@@ -398,11 +400,11 @@ impl Sweep {
     /// Returns the current pitch offset in semitones.
     #[inline]
     pub fn tick(&mut self, sample_rate: f32, semitones: f32, time_s: f32) -> f32 {
-        if time_s <= 0.0 {
-            return semitones;
+        if time_s <= 0.0 || semitones == 0.0 {
+            return 0.0;
         }
         self.elapsed = (self.elapsed + 1.0 / sample_rate).min(time_s);
-        semitones * (self.elapsed / time_s)
+        semitones * (1.0 - self.elapsed / time_s)
     }
 }
 

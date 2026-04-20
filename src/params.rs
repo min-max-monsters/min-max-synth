@@ -86,6 +86,11 @@ pub struct SynthParams {
     #[id = "swp_tm"]
     pub sweep_time: FloatParam,
 
+    #[id = "mono"]
+    pub mono: BoolParam,
+    #[id = "arp_rt"]
+    pub arp_rate: FloatParam,
+
     #[id = "bit_dp"]
     pub bit_depth: FloatParam,
     #[id = "bit_rt"]
@@ -105,7 +110,7 @@ pub struct SynthParams {
 impl Default for SynthParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(880, 640),
+            editor_state: EguiState::from_size(1100, 720),
 
             gain: FloatParam::new(
                 "Gain",
@@ -146,9 +151,18 @@ impl Default for SynthParams {
                 .with_unit(" semis").with_step_size(0.01),
             vibrato_delay: ms("Vib Delay", 0.0, 0.0, 2000.0),
 
-            sweep_semi: FloatParam::new("Sweep", 0.0, FloatRange::Linear { min: -36.0, max: 36.0 })
+            sweep_semi: FloatParam::new("Auto Bend", 0.0, FloatRange::Linear { min: -36.0, max: 36.0 })
                 .with_unit(" semis").with_step_size(0.1),
-            sweep_time: ms("Sweep Time", 0.0, 0.0, 2000.0),
+            sweep_time: ms("Bend Time", 0.0, 0.0, 2000.0),
+
+            mono: BoolParam::new("Monophonic", false),
+            arp_rate: FloatParam::new(
+                "Arp Rate",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 32.0 },
+            )
+            .with_unit(" Hz")
+            .with_step_size(0.5),
 
             bit_depth: FloatParam::new("Bit Depth", 16.0, FloatRange::Linear { min: 1.0, max: 16.0 })
                 .with_unit(" bits").with_step_size(0.5),
@@ -197,6 +211,8 @@ impl SynthParams {
             vibrato_delay: self.vibrato_delay.value() / 1000.0,
             sweep_semi: self.sweep_semi.value(),
             sweep_time: self.sweep_time.value() / 1000.0,
+            mono: self.mono.value(),
+            arp_rate: self.arp_rate.value(),
             bit_depth: self.bit_depth.value(),
             bit_rate_hz: self.bit_rate.value(),
             fine_tune_cents: self.fine_tune.value(),

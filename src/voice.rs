@@ -25,6 +25,8 @@ pub struct VoiceParams {
     pub vibrato_delay: f32,
     pub sweep_semi: f32,
     pub sweep_time: f32,
+    pub mono: bool,
+    pub arp_rate: f32,
     pub bit_depth: f32,
     pub bit_rate_hz: f32,
     pub fine_tune_cents: f32,
@@ -41,6 +43,7 @@ pub struct Voice {
     note: Option<u8>,
     velocity: f32,
     age: u64, // for voice stealing
+    elapsed_samples: u64,
 
     // Oscillators (only one active at a time but kept around).
     pulse: PulseOsc,
@@ -67,6 +70,7 @@ impl Voice {
             note: None,
             velocity: 0.0,
             age: 0,
+            elapsed_samples: 0,
             pulse: PulseOsc::default(),
             triangle: TriangleOsc::default(),
             wave: WaveOsc::default(),
@@ -102,6 +106,7 @@ impl Voice {
         self.note = Some(note);
         self.velocity = velocity.clamp(0.0, 1.0);
         self.age = age;
+        self.elapsed_samples = 0;
         self.pulse.reset();
         self.triangle.reset();
         self.wave.reset();
@@ -149,6 +154,19 @@ impl Voice {
         }
     }
 
+    /// Change the playing pitch without retriggering the envelope or
+    /// oscillator phases. Used for legato (mono mode) and arpeggio.
+    pub fn set_note(&mut self, note: u8) {
+        if self.note.is_some() {
+            self.note = Some(note);
+        }
+    }
+
+    /// Is this voice currently sounding a non-drum note?
+    pub fn is_pitched_active(&self) -> bool {
+        self.note.is_some() && !self.is_drum && self.env.is_active()
+    }
+
     /// Render one sample. The bitcrusher is applied to the bus, not per-voice,
     /// so this returns a clean per-voice signal.
     #[inline]
@@ -165,8 +183,17 @@ impl Voice {
         }
 
         // Pitch chain: base note + octave + fine + vibrato + sweep.
+        // Vibrato fades in smoothly over ~80 ms after the configured delay.
+        let elapsed_s = self.elapsed_samples as f32 / self.sample_rate;
+        self.elapsed_samples = self.elapsed_samples.saturating_add(1);
+        let vib_gain = if params.vibrato_depth_semi <= 0.0 {
+            0.0
+        } else {
+            ((elapsed_s - params.vibrato_delay) / 0.08).clamp(0.0, 1.0)
+        };
         let vib = self.vibrato.tick(params.vibrato_rate, self.sample_rate)
-            * params.vibrato_depth_semi;
+            * params.vibrato_depth_semi
+            * vib_gain;
         let sweep_offset = self.sweep.tick(self.sample_rate, params.sweep_semi, params.sweep_time);
         let n = note as f32
             + params.octave_shift as f32 * 12.0

@@ -55,7 +55,12 @@ pub fn create_editor(
                 .show(ctx, |ui| {
                     draw_header(ui, &params, setter, state);
                     ui.add_space(6.0);
-                    draw_main(ui, &params, setter);
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .max_height(ui.available_height() - 130.0)
+                        .show(ui, |ui| {
+                            draw_main(ui, &params, setter);
+                        });
                     ui.add_space(6.0);
                     draw_keyboard(ui, state);
                 });
@@ -169,10 +174,17 @@ fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                 });
             });
             ui.add_space(6.0);
-            panel(ui, "PITCH SWEEP", palette::BLUE, |ui| {
+            panel(ui, "AUTO BEND", palette::BLUE, |ui| {
                 ui.horizontal(|ui| {
                     ui.add(Knob::new(&params.sweep_semi, setter).with_label("AMOUNT"));
                     ui.add(Knob::new(&params.sweep_time, setter).with_label("TIME"));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "MONO / ARP", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    led_toggle(ui, &params.mono, setter, "Monophonic");
+                    ui.add(Knob::new(&params.arp_rate, setter).with_label("ARP RATE"));
                 });
             });
             ui.add_space(6.0);

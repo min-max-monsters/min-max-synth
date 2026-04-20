@@ -92,6 +92,8 @@ fn gb_pulse_arp(p: &SynthParams, s: &ParamSetter) {
     s.set_parameter(&p.bit_depth, 8.0);
     s.set_parameter(&p.bit_rate, 22_050.0);
     s.set_parameter(&p.drum_mode, false);
+    s.set_parameter(&p.mono, true);
+    s.set_parameter(&p.arp_rate, 16.0);
 }
 
 fn genesis_fm_bell(p: &SynthParams, s: &ParamSetter) {

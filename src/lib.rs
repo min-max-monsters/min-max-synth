@@ -36,6 +36,13 @@ pub struct MinMaxSynth {
     crusher: BitCrusher,
     age_counter: u64,
     note_queue: Arc<ArrayQueue<GuiNoteEvent>>,
+    /// Stack of currently held MIDI notes (oldest first). Used for mono mode
+    /// and the fast arpeggiator.
+    held_notes: Vec<u8>,
+    /// Phase accumulator for the mono arpeggiator (0..1, advances at arp_rate).
+    arp_phase: f32,
+    /// Index into `held_notes` for the next arp step.
+    arp_index: usize,
 }
 
 impl Default for MinMaxSynth {
@@ -48,6 +55,9 @@ impl Default for MinMaxSynth {
             crusher: BitCrusher::default(),
             age_counter: 0,
             note_queue: Arc::new(ArrayQueue::new(256)),
+            held_notes: Vec::with_capacity(16),
+            arp_phase: 0.0,
+            arp_index: 0,
         }
     }
 }
@@ -61,7 +71,31 @@ impl MinMaxSynth {
     fn handle_note_on(&mut self, note: u8, velocity: f32) {
         let snapshot = self.params.snapshot();
         let age = self.next_age();
-        // Find a free voice or steal the oldest one.
+
+        // Update held-note stack (used by mono/arp). Drum mode bypasses it.
+        if !snapshot.drum_mode {
+            self.held_notes.retain(|&n| n != note);
+            self.held_notes.push(note);
+        }
+
+        if snapshot.mono && !snapshot.drum_mode {
+            // Mono: reuse voice 0. Legato pitch change if already playing,
+            // otherwise full retrigger.
+            self.arp_index = 0;
+            self.arp_phase = 0.0;
+            if self.voices[0].is_pitched_active() {
+                self.voices[0].set_note(note);
+            } else {
+                // Silence any other lingering voices first.
+                for v in self.voices.iter_mut().skip(1) {
+                    v.note_off();
+                }
+                self.voices[0].note_on(note, velocity, &snapshot, age);
+            }
+            return;
+        }
+
+        // Polyphonic: find a free voice or steal the oldest one.
         let idx = self
             .voices
             .iter()
@@ -78,6 +112,20 @@ impl MinMaxSynth {
     }
 
     fn handle_note_off(&mut self, note: u8) {
+        let snapshot = self.params.snapshot();
+        if !snapshot.drum_mode {
+            self.held_notes.retain(|&n| n != note);
+        }
+        if snapshot.mono && !snapshot.drum_mode {
+            // Mono: only release when the stack is empty; otherwise fall back
+            // to the previously held note.
+            if let Some(&prev) = self.held_notes.last() {
+                self.voices[0].set_note(prev);
+            } else {
+                self.voices[0].note_off();
+            }
+            return;
+        }
         for v in &mut self.voices {
             if v.note() == Some(note) {
                 v.note_off();
@@ -170,6 +218,26 @@ impl Plugin for MinMaxSynth {
             }
 
             let gain = self.params.gain.smoothed.next();
+
+            // Mono arpeggiator: while two or more notes are held in mono mode
+            // and the arp rate is non-zero, cycle voice 0 through the held
+            // stack at `arp_rate` Hz. The envelope keeps running so it sounds
+            // like a fast chord shimmer (Magical 8bit-style).
+            if snapshot.mono
+                && !snapshot.drum_mode
+                && snapshot.arp_rate > 0.0
+                && self.held_notes.len() >= 2
+                && self.voices[0].is_pitched_active()
+            {
+                self.arp_phase += snapshot.arp_rate / self.sample_rate;
+                while self.arp_phase >= 1.0 {
+                    self.arp_phase -= 1.0;
+                    self.arp_index = (self.arp_index + 1) % self.held_notes.len();
+                    let n = self.held_notes[self.arp_index];
+                    self.voices[0].set_note(n);
+                }
+            }
+
             let mut mix = 0.0_f32;
             for v in &mut self.voices {
                 mix += v.tick(&snapshot);
