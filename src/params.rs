@@ -105,7 +105,7 @@ pub struct SynthParams {
 impl Default for SynthParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(640, 520),
+            editor_state: EguiState::from_size(880, 640),
 
             gain: FloatParam::new(
                 "Gain",

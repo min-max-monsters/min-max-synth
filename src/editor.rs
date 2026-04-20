@@ -1,63 +1,32 @@
-//! Egui editor with on-screen QWERTY piano keyboard.
+//! Egui editor with a chiptune-flavoured layout: rotary knobs, LED toggles,
+//! grouped panels, and an on-screen + QWERTY piano keyboard.
 
-use crate::params::SynthParams;
+use crate::params::{SynthParams, WaveChoice};
 use crate::presets::{apply_preset_with_setter, PRESET_NAMES};
 use crate::samples::DrumKind;
+use crate::widgets::{apply_style, led_toggle, palette, panel, Knob};
 use crate::GuiNoteEvent;
 use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::{Editor, ParamSetter};
-use nih_plug_egui::egui::{self, Color32, RichText, Stroke, Ui};
-use nih_plug_egui::{create_egui_editor, widgets, EguiState};
+use nih_plug_egui::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui};
+use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::Arc;
 
 /// QWERTY-to-MIDI mapping like a tracker / many soft synths.
-/// Bottom row = white keys C..., top row = sharps.
-/// Returns the MIDI note offset from the editor's base note.
 const BOTTOM_ROW: &[(char, i32)] = &[
-    ('z', 0),  // C
-    ('s', 1),  // C#
-    ('x', 2),  // D
-    ('d', 3),  // D#
-    ('c', 4),  // E
-    ('v', 5),  // F
-    ('g', 6),  // F#
-    ('b', 7),  // G
-    ('h', 8),  // G#
-    ('n', 9),  // A
-    ('j', 10), // A#
-    ('m', 11), // B
-    (',', 12), // C+1
-    ('l', 13), // C#+1
-    ('.', 14), // D+1
-    (';', 15), // D#+1
-    ('/', 16), // E+1
+    ('z', 0), ('s', 1), ('x', 2), ('d', 3), ('c', 4), ('v', 5), ('g', 6),
+    ('b', 7), ('h', 8), ('n', 9), ('j', 10), ('m', 11),
+    (',', 12), ('l', 13), ('.', 14), (';', 15), ('/', 16),
 ];
 const TOP_ROW: &[(char, i32)] = &[
-    ('q', 12), // C+1
-    ('2', 13),
-    ('w', 14),
-    ('3', 15),
-    ('e', 16),
-    ('r', 17),
-    ('5', 18),
-    ('t', 19),
-    ('6', 20),
-    ('y', 21),
-    ('7', 22),
-    ('u', 23),
-    ('i', 24),
-    ('9', 25),
-    ('o', 26),
-    ('0', 27),
-    ('p', 28),
+    ('q', 12), ('2', 13), ('w', 14), ('3', 15), ('e', 16), ('r', 17), ('5', 18),
+    ('t', 19), ('6', 20), ('y', 21), ('7', 22), ('u', 23), ('i', 24), ('9', 25),
+    ('o', 26), ('0', 27), ('p', 28),
 ];
 
 pub struct EditorState {
-    /// Tracks which keys are currently held so we send note-on once.
     pressed: [bool; 128],
-    /// MIDI note that the leftmost QWERTY key (`z`) maps to.
     base_note: i32,
-    /// Currently selected preset index in the dropdown.
     selected_preset: usize,
 }
 
@@ -67,7 +36,6 @@ impl Default for EditorState {
     }
 }
 
-/// Build the editor.
 pub fn create_editor(
     params: Arc<SynthParams>,
     note_queue: Arc<ArrayQueue<GuiNoteEvent>>,
@@ -78,28 +46,312 @@ pub fn create_editor(
         EditorState::default(),
         |_, _| {},
         move |ctx, setter, state| {
+            apply_style(ctx);
             ctx.request_repaint();
             handle_keyboard(ctx, state, &note_queue);
 
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading(RichText::new("min_max_synth").color(Color32::from_rgb(180, 240, 120)));
-                ui.label("Retro chiptune voice — NES / Gameboy / Genesis flavours");
-                ui.separator();
-
-                draw_presets(ui, &params, setter, state);
-                ui.separator();
-                draw_oscillator(ui, &params, setter);
-                ui.separator();
-                draw_envelope(ui, &params, setter);
-                ui.separator();
-                draw_modulation(ui, &params, setter);
-                ui.separator();
-                draw_drums(ui, &params, setter);
-                ui.separator();
-                draw_keyboard_help(ui, state);
-            });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::default().fill(palette::BG_DEEP).inner_margin(10))
+                .show(ctx, |ui| {
+                    draw_header(ui, &params, setter, state);
+                    ui.add_space(6.0);
+                    draw_main(ui, &params, setter);
+                    ui.add_space(6.0);
+                    draw_keyboard(ui, state);
+                });
         },
     )
+}
+
+fn draw_header(
+    ui: &mut Ui,
+    params: &SynthParams,
+    setter: &ParamSetter,
+    state: &mut EditorState,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("min_max_synth")
+                .color(palette::ACCENT)
+                .size(20.0)
+                .strong(),
+        );
+        ui.label(
+            RichText::new("·  retro chiptune voice")
+                .color(palette::TEXT_DIM)
+                .size(12.0),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Load").on_hover_text("Re-apply selected preset").clicked() {
+                apply_preset_with_setter(state.selected_preset, params, setter);
+            }
+            let current = PRESET_NAMES.get(state.selected_preset).copied().unwrap_or("—");
+            egui::ComboBox::from_id_salt("preset_combo")
+                .selected_text(current)
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for (i, name) in PRESET_NAMES.iter().enumerate() {
+                        if ui.selectable_value(&mut state.selected_preset, i, *name).clicked() {
+                            apply_preset_with_setter(i, params, setter);
+                        }
+                    }
+                });
+            ui.label(RichText::new("PRESET").color(palette::TEXT_DIM).size(11.0));
+        });
+    });
+    ui.add_space(2.0);
+    ui.painter().hline(
+        ui.max_rect().x_range(),
+        ui.cursor().min.y,
+        Stroke::new(1.0, palette::BORDER),
+    );
+}
+
+fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    ui.horizontal_top(|ui| {
+        // Left column: oscillator + amp.
+        ui.vertical(|ui| {
+            panel(ui, "OSCILLATOR", palette::ACCENT, |ui| {
+                draw_waveform_picker(ui, params, setter);
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.pulse_duty, setter).with_label("DUTY"));
+                    ui.add(Knob::new(&params.fm_ratio, setter).with_label("FM RATIO"));
+                    ui.add(Knob::new(&params.fm_index, setter).with_label("FM IDX"));
+                });
+                ui.add_space(2.0);
+                led_toggle(ui, &params.noise_short, setter, "Short LFSR (NES)");
+            });
+            ui.add_space(6.0);
+            panel(ui, "AMP", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.octave, setter).with_label("OCT"));
+                    ui.add(Knob::new(&params.fine_tune, setter).with_label("FINE"));
+                    ui.add(Knob::new(&params.gain, setter).with_label("GAIN").with_diameter(54.0));
+                });
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Middle column: envelope.
+        ui.vertical(|ui| {
+            panel(ui, "ENVELOPE", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.attack, setter).with_label("A"));
+                    ui.add(Knob::new(&params.decay, setter).with_label("D"));
+                    ui.add(Knob::new(&params.sustain, setter).with_label("S"));
+                    ui.add(Knob::new(&params.release, setter).with_label("R"));
+                });
+                ui.add_space(2.0);
+                draw_adsr_visual(ui, params);
+            });
+            ui.add_space(6.0);
+            panel(ui, "DRUMS", palette::RED, |ui| {
+                ui.horizontal(|ui| {
+                    led_toggle(ui, &params.drum_mode, setter, "Enabled");
+                    led_toggle(ui, &params.drum_pitch, setter, "Pitch tracks");
+                });
+                ui.add_space(4.0);
+                draw_drum_legend(ui);
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Right column: modulation + bitcrush.
+        ui.vertical(|ui| {
+            panel(ui, "VIBRATO", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.vibrato_rate, setter).with_label("RATE"));
+                    ui.add(Knob::new(&params.vibrato_depth, setter).with_label("DEPTH"));
+                    ui.add(Knob::new(&params.vibrato_delay, setter).with_label("DELAY"));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "PITCH SWEEP", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.sweep_semi, setter).with_label("AMOUNT"));
+                    ui.add(Knob::new(&params.sweep_time, setter).with_label("TIME"));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "BITCRUSH", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.bit_depth, setter).with_label("BITS"));
+                    ui.add(Knob::new(&params.bit_rate, setter).with_label("RATE"));
+                });
+            });
+        });
+    });
+}
+
+fn draw_waveform_picker(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    use WaveChoice::*;
+    let choices = [
+        (Pulse, "PULSE"),
+        (Triangle, "TRI"),
+        (Wave, "WAVE"),
+        (Noise, "NOISE"),
+        (Fm, "FM"),
+        (Saw, "SAW"),
+    ];
+    let current = params.waveform.value();
+    ui.horizontal_wrapped(|ui| {
+        for (variant, label) in choices {
+            let selected = current == variant;
+            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+            let btn = egui::Button::new(RichText::new(label).color(fg).monospace())
+                .fill(bg)
+                .stroke(Stroke::new(1.0, palette::BORDER))
+                .min_size(egui::vec2(48.0, 22.0));
+            if ui.add(btn).clicked() {
+                setter.begin_set_parameter(&params.waveform);
+                setter.set_parameter(&params.waveform, variant);
+                setter.end_set_parameter(&params.waveform);
+            }
+        }
+    });
+}
+
+fn draw_adsr_visual(ui: &mut Ui, params: &SynthParams) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 50.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, palette::BG_DEEP);
+    painter.rect_stroke(rect, 2.0, Stroke::new(1.0, palette::BORDER), egui::StrokeKind::Inside);
+
+    // Time-shape: A,D,Hold,R. Use parameter values, log-scale times into pixels.
+    let a = params.attack.value().clamp(0.0, 5.0);
+    let d = params.decay.value().clamp(0.0, 5.0);
+    let s = params.sustain.value().clamp(0.0, 1.0);
+    let r = params.release.value().clamp(0.0, 5.0);
+    let total = (a + d + 0.5 + r).max(0.001);
+    let w = rect.width() - 4.0;
+    let h = rect.height() - 6.0;
+    let x0 = rect.min.x + 2.0;
+    let y0 = rect.max.y - 3.0;
+    let yp = |level: f32| y0 - h * level.clamp(0.0, 1.0);
+    let xa = x0 + w * (a / total);
+    let xd = xa + w * (d / total);
+    let xh = xd + w * (0.5 / total);
+    let xr = rect.max.x - 2.0;
+
+    let pts = vec![
+        Pos2::new(x0, y0),
+        Pos2::new(xa, yp(1.0)),
+        Pos2::new(xd, yp(s)),
+        Pos2::new(xh, yp(s)),
+        Pos2::new(xr, y0),
+    ];
+    // Filled area under the curve.
+    let mut fill_pts = pts.clone();
+    fill_pts.push(Pos2::new(xr, y0));
+    fill_pts.push(Pos2::new(x0, y0));
+    painter.add(egui::Shape::convex_polygon(
+        fill_pts,
+        Color32::from_rgba_unmultiplied(180, 240, 120, 30),
+        Stroke::NONE,
+    ));
+    painter.add(egui::Shape::line(pts, Stroke::new(1.5, palette::ACCENT)));
+}
+
+fn draw_drum_legend(ui: &mut Ui) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new("Mapped from C2:")
+                .color(palette::TEXT_DIM)
+                .size(11.0),
+        );
+        for (i, d) in DrumKind::ALL.iter().enumerate() {
+            ui.label(
+                RichText::new(format!("{}·{}", i, d.label()))
+                    .color(palette::BLUE)
+                    .monospace()
+                    .size(11.0),
+            );
+        }
+    });
+}
+
+fn draw_keyboard(ui: &mut Ui, state: &EditorState) {
+    panel(ui, "KEYBOARD", palette::BLUE, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!(
+                    "Base {} ({})",
+                    state.base_note,
+                    midi_to_name(state.base_note as u8)
+                ))
+                .color(palette::TEXT)
+                .monospace(),
+            );
+            ui.label(
+                RichText::new("•  PageUp / PageDown shift octave  •  Z…/  Q…P  for keys")
+                    .color(palette::TEXT_DIM)
+                    .size(11.0),
+            );
+        });
+        ui.add_space(4.0);
+        draw_piano(ui, state);
+    });
+}
+
+fn draw_piano(ui: &mut Ui, state: &EditorState) {
+    let n_white = 21; // 3 octaves
+    let height = 70.0;
+    let width = ui.available_width().min(900.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    let key_w = rect.width() / n_white as f32;
+    // White keys.
+    let white_steps = [0, 2, 4, 5, 7, 9, 11];
+    let mut white_idx = 0;
+    for octave in 0..3 {
+        for &s in &white_steps {
+            let semis = octave * 12 + s;
+            let active = state.pressed[(state.base_note + semis).clamp(0, 127) as usize];
+            let x = rect.min.x + white_idx as f32 * key_w;
+            let r = Rect::from_min_size(Pos2::new(x, rect.min.y), egui::vec2(key_w - 1.0, height));
+            let fill = if active { palette::ACCENT } else { Color32::from_rgb(235, 235, 235) };
+            painter.rect_filled(r, 1.0, fill);
+            painter.rect_stroke(r, 1.0, Stroke::new(1.0, palette::BORDER), egui::StrokeKind::Inside);
+            // Note label (only C's).
+            if s == 0 {
+                let octv = (state.base_note + semis) / 12 - 1;
+                painter.text(
+                    Pos2::new(r.center().x, r.max.y - 8.0),
+                    Align2::CENTER_BOTTOM,
+                    format!("C{}", octv),
+                    FontId::monospace(9.0),
+                    Color32::from_rgb(120, 120, 120),
+                );
+            }
+            white_idx += 1;
+        }
+    }
+    // Black keys overlay.
+    let mut white_idx = 0;
+    for octave in 0..3 {
+        for (i, &s) in white_steps.iter().enumerate() {
+            // A black key sits to the upper right of this white key when this is C/D/F/G/A.
+            let has_black = matches!(i, 0 | 1 | 3 | 4 | 5);
+            if has_black && white_idx + 1 < n_white {
+                let x = rect.min.x + (white_idx + 1) as f32 * key_w - key_w * 0.32;
+                let r = Rect::from_min_size(
+                    Pos2::new(x, rect.min.y),
+                    egui::vec2(key_w * 0.64, height * 0.6),
+                );
+                let semis = octave * 12 + s + 1;
+                let active = state.pressed[(state.base_note + semis).clamp(0, 127) as usize];
+                let fill = if active { palette::ACCENT_DIM } else { Color32::from_rgb(20, 20, 20) };
+                painter.rect_filled(r, 1.0, fill);
+                painter.rect_stroke(r, 1.0, Stroke::new(1.0, palette::BORDER), egui::StrokeKind::Inside);
+            }
+            white_idx += 1;
+        }
+    }
 }
 
 fn handle_keyboard(
@@ -108,7 +360,6 @@ fn handle_keyboard(
     note_queue: &Arc<ArrayQueue<GuiNoteEvent>>,
 ) {
     ctx.input(|i| {
-        // Octave shift via PageUp/PageDown so it doesn't conflict with letters.
         if i.key_pressed(egui::Key::PageUp) {
             state.base_note = (state.base_note + 12).min(108);
         }
@@ -116,23 +367,7 @@ fn handle_keyboard(
             state.base_note = (state.base_note - 12).max(12);
         }
 
-        // Build a set of currently-held QWERTY notes from text events.
         let mut held = [false; 128];
-        for ev in &i.events {
-            if let egui::Event::Key { key, pressed, repeat, .. } = ev {
-                if *repeat {
-                    continue;
-                }
-                if let Some(offset) = key_to_offset(*key) {
-                    let note = (state.base_note + offset).clamp(0, 127) as usize;
-                    if *pressed {
-                        held[note] = true;
-                    }
-                }
-            }
-        }
-        // Persist held state across frames using egui's keys_down for a smoother
-        // experience (since keyup events can be missed if the window loses focus).
         for &(ch, off) in BOTTOM_ROW.iter().chain(TOP_ROW.iter()) {
             if let Some(key) = char_to_egui_key(ch) {
                 if i.key_down(key) {
@@ -153,13 +388,6 @@ fn handle_keyboard(
     });
 }
 
-fn key_to_offset(key: egui::Key) -> Option<i32> {
-    BOTTOM_ROW
-        .iter()
-        .chain(TOP_ROW.iter())
-        .find_map(|(ch, off)| (char_to_egui_key(*ch) == Some(key)).then_some(*off))
-}
-
 fn char_to_egui_key(c: char) -> Option<egui::Key> {
     Some(match c {
         'a' => egui::Key::A, 'b' => egui::Key::B, 'c' => egui::Key::C, 'd' => egui::Key::D,
@@ -177,183 +405,6 @@ fn char_to_egui_key(c: char) -> Option<egui::Key> {
         '/' => egui::Key::Slash,
         _ => return None,
     })
-}
-
-fn draw_presets(
-    ui: &mut Ui,
-    params: &SynthParams,
-    setter: &ParamSetter,
-    state: &mut EditorState,
-) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Preset:").strong());
-        let current = PRESET_NAMES
-            .get(state.selected_preset)
-            .copied()
-            .unwrap_or("<none>");
-        egui::ComboBox::from_id_salt("preset_combo")
-            .selected_text(current)
-            .width(220.0)
-            .show_ui(ui, |ui| {
-                for (i, name) in PRESET_NAMES.iter().enumerate() {
-                    if ui
-                        .selectable_value(&mut state.selected_preset, i, *name)
-                        .clicked()
-                    {
-                        apply_preset_with_setter(i, params, setter);
-                    }
-                }
-            });
-        if ui.button("Load").clicked() {
-            apply_preset_with_setter(state.selected_preset, params, setter);
-        }
-    });
-}
-
-fn draw_oscillator(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
-    ui.label(RichText::new("Oscillator").strong());
-    ui.horizontal(|ui| {
-        ui.label("Wave");
-        ui.add(widgets::ParamSlider::for_param(&params.waveform, setter));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Duty");
-        ui.add(widgets::ParamSlider::for_param(&params.pulse_duty, setter));
-        ui.label("Noise short:");
-        ui.add(widgets::ParamSlider::for_param(&params.noise_short, setter));
-    });
-    ui.horizontal(|ui| {
-        ui.label("FM ratio");
-        ui.add(widgets::ParamSlider::for_param(&params.fm_ratio, setter));
-        ui.label("FM index");
-        ui.add(widgets::ParamSlider::for_param(&params.fm_index, setter));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Octave");
-        ui.add(widgets::ParamSlider::for_param(&params.octave, setter));
-        ui.label("Fine");
-        ui.add(widgets::ParamSlider::for_param(&params.fine_tune, setter));
-        ui.label("Gain");
-        ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
-    });
-}
-
-fn draw_envelope(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
-    ui.label(RichText::new("Envelope (ADSR)").strong());
-    ui.horizontal(|ui| {
-        ui.label("A");
-        ui.add(widgets::ParamSlider::for_param(&params.attack, setter));
-        ui.label("D");
-        ui.add(widgets::ParamSlider::for_param(&params.decay, setter));
-        ui.label("S");
-        ui.add(widgets::ParamSlider::for_param(&params.sustain, setter));
-        ui.label("R");
-        ui.add(widgets::ParamSlider::for_param(&params.release, setter));
-    });
-}
-
-fn draw_modulation(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
-    ui.label(RichText::new("Vibrato / Sweep / Bitcrush").strong());
-    ui.horizontal(|ui| {
-        ui.label("Vib rate");
-        ui.add(widgets::ParamSlider::for_param(&params.vibrato_rate, setter));
-        ui.label("Vib depth");
-        ui.add(widgets::ParamSlider::for_param(&params.vibrato_depth, setter));
-        ui.label("Vib delay");
-        ui.add(widgets::ParamSlider::for_param(&params.vibrato_delay, setter));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Sweep semi");
-        ui.add(widgets::ParamSlider::for_param(&params.sweep_semi, setter));
-        ui.label("Sweep time");
-        ui.add(widgets::ParamSlider::for_param(&params.sweep_time, setter));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Bit depth");
-        ui.add(widgets::ParamSlider::for_param(&params.bit_depth, setter));
-        ui.label("Bit rate");
-        ui.add(widgets::ParamSlider::for_param(&params.bit_rate, setter));
-    });
-}
-
-fn draw_drums(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
-    ui.label(RichText::new("Drum Mode").strong());
-    ui.horizontal(|ui| {
-        ui.label("Enabled");
-        ui.add(widgets::ParamSlider::for_param(&params.drum_mode, setter));
-        ui.label("Pitch tracks note");
-        ui.add(widgets::ParamSlider::for_param(&params.drum_pitch, setter));
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Drum slots (mapped from C2 upward):");
-        for d in DrumKind::ALL {
-            ui.add(egui::Label::new(
-                RichText::new(format!("{}: {}", d as u8, d.label()))
-                    .color(Color32::from_rgb(120, 200, 255)),
-            ));
-        }
-    });
-}
-
-fn draw_keyboard_help(ui: &mut Ui, state: &EditorState) {
-    ui.label(RichText::new("QWERTY Keyboard").strong());
-    ui.label(format!(
-        "Base note: MIDI {} ({})  •  PageUp / PageDown to shift octave",
-        state.base_note,
-        midi_to_name(state.base_note as u8)
-    ));
-    ui.label("Bottom row: Z S X D C V G B H N J M , L . ; /");
-    ui.label("Top row:    Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P");
-
-    // Simple visual keyboard.
-    let (rect, _resp) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width().min(540.0), 60.0),
-        egui::Sense::hover(),
-    );
-    let painter = ui.painter_at(rect);
-    let n_white = 14;
-    let w = rect.width() / n_white as f32;
-    let mut white_idx = 0;
-    let white_steps = [0, 2, 4, 5, 7, 9, 11];
-    for octave in 0..2 {
-        for &s in &white_steps {
-            let x = rect.min.x + white_idx as f32 * w;
-            let key_rect = egui::Rect::from_min_size(
-                egui::pos2(x, rect.min.y),
-                egui::vec2(w - 1.0, rect.height()),
-            );
-            let semis = octave * 12 + s;
-            let active = state.pressed[(state.base_note + semis).clamp(0, 127) as usize];
-            let fill = if active { Color32::from_rgb(180, 240, 120) } else { Color32::WHITE };
-            painter.rect_filled(key_rect, 1.0, fill);
-            painter.rect_stroke(
-                key_rect,
-                1.0,
-                Stroke::new(1.0, Color32::BLACK),
-                egui::StrokeKind::Middle,
-            );
-            white_idx += 1;
-        }
-    }
-    // Black keys overlay.
-    let black_offsets = [1, 3, 6, 8, 10];
-    let mut overall = 0;
-    for octave in 0..2 {
-        for (i, &s) in white_steps.iter().enumerate() {
-            if i < 6 && black_offsets.contains(&(s + 1)) {
-                let x = rect.min.x + (overall + 1) as f32 * w - w * 0.3;
-                let key_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.min.y),
-                    egui::vec2(w * 0.6, rect.height() * 0.6),
-                );
-                let semis = octave * 12 + s + 1;
-                let active = state.pressed[(state.base_note + semis).clamp(0, 127) as usize];
-                let fill = if active { Color32::from_rgb(120, 200, 80) } else { Color32::BLACK };
-                painter.rect_filled(key_rect, 1.0, fill);
-            }
-            overall += 1;
-        }
-    }
 }
 
 fn midi_to_name(n: u8) -> String {

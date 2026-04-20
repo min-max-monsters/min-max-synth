@@ -14,7 +14,10 @@ name = "min_max_standalone"
 path = "src/bin/standalone.rs"
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs", "standalone"] }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = [
+    "assert_process_allocs",
+    "standalone",
+] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 crossbeam-queue = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -30,7 +33,7 @@ codegen-units = 1
 strip = true
 
 [profile.dev]
-opt-level = 1   # audio dsp is slow without some optimization
+opt-level = 1 # audio dsp is slow without some optimization
 
 [profile.dev.package."*"]
 opt-level = 3

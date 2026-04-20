@@ -8,6 +8,7 @@ pub mod params;
 pub mod presets;
 pub mod samples;
 pub mod voice;
+pub mod widgets;
 
 use crate::dsp::BitCrusher;
 use crate::params::SynthParams;
@@ -173,8 +174,12 @@ impl Plugin for MinMaxSynth {
             for v in &mut self.voices {
                 mix += v.tick(&snapshot, &mut self.crusher);
             }
-            // Light limiter to avoid clipping at full polyphony.
-            let out = (mix * gain).clamp(-1.0, 1.0);
+            // Give the bus enough headroom that a few simultaneous full-scale
+            // pulse voices don't immediately clip, then apply a cheap soft
+            // clipper so anything still over the rails distorts musically
+            // instead of as a hard square.
+            let headroom = (NUM_VOICES as f32).sqrt();
+            let out = soft_clip(mix * gain / headroom);
             for s in channels {
                 *s = out;
             }
@@ -206,3 +211,12 @@ impl Vst3Plugin for MinMaxSynth {
 
 nih_export_clap!(MinMaxSynth);
 nih_export_vst3!(MinMaxSynth);
+
+/// Cheap tanh-like soft clipper. Linear up to ~|0.5|, smoothly saturates
+/// toward ±1.0 above that. Avoids the harsh edge of `clamp()` while staying
+/// allocation- and branch-free.
+#[inline]
+fn soft_clip(x: f32) -> f32 {
+    let x = x.clamp(-3.0, 3.0);
+    x * (27.0 + x * x) / (27.0 + 9.0 * x * x)
+}
