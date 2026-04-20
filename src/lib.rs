@@ -1,0 +1,208 @@
+//! Plugin entry point: voice management, MIDI handling, and audio rendering.
+
+#![allow(clippy::new_without_default)]
+
+pub mod dsp;
+pub mod editor;
+pub mod params;
+pub mod presets;
+pub mod samples;
+pub mod voice;
+
+use crate::dsp::BitCrusher;
+use crate::params::SynthParams;
+use crate::voice::Voice;
+use crossbeam_queue::ArrayQueue;
+use nih_plug::prelude::*;
+use std::sync::Arc;
+
+/// Number of polyphonic voices.
+pub const NUM_VOICES: usize = 8;
+
+/// Note events produced by the on-screen / QWERTY keyboard in the editor and
+/// consumed by the audio thread.
+#[derive(Debug, Clone, Copy)]
+pub enum GuiNoteEvent {
+    On { note: u8, velocity: f32 },
+    Off { note: u8 },
+}
+
+/// The plugin object held by the host.
+pub struct MinMaxSynth {
+    params: Arc<SynthParams>,
+    voices: Vec<Voice>,
+    sample_rate: f32,
+    crusher: BitCrusher,
+    age_counter: u64,
+    note_queue: Arc<ArrayQueue<GuiNoteEvent>>,
+}
+
+impl Default for MinMaxSynth {
+    fn default() -> Self {
+        let sr = 44_100.0;
+        Self {
+            params: Arc::new(SynthParams::default()),
+            voices: (0..NUM_VOICES).map(|_| Voice::new(sr)).collect(),
+            sample_rate: sr,
+            crusher: BitCrusher::default(),
+            age_counter: 0,
+            note_queue: Arc::new(ArrayQueue::new(256)),
+        }
+    }
+}
+
+impl MinMaxSynth {
+    fn next_age(&mut self) -> u64 {
+        self.age_counter = self.age_counter.wrapping_add(1);
+        self.age_counter
+    }
+
+    fn handle_note_on(&mut self, note: u8, velocity: f32) {
+        let snapshot = self.params.snapshot();
+        let age = self.next_age();
+        // Find a free voice or steal the oldest one.
+        let idx = self
+            .voices
+            .iter()
+            .position(|v| !v.is_active())
+            .unwrap_or_else(|| {
+                self.voices
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, v)| v.age())
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)
+            });
+        self.voices[idx].note_on(note, velocity, &snapshot, age);
+    }
+
+    fn handle_note_off(&mut self, note: u8) {
+        for v in &mut self.voices {
+            if v.note() == Some(note) {
+                v.note_off();
+            }
+        }
+    }
+}
+
+impl Plugin for MinMaxSynth {
+    const NAME: &'static str = "min_max_synth";
+    const VENDOR: &'static str = "Persy";
+    const URL: &'static str = "https://example.com";
+    const EMAIL: &'static str = "noreply@example.com";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: None,
+        main_output_channels: std::num::NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {
+        self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create_editor(self.params.clone(), self.note_queue.clone())
+    }
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {
+        self.sample_rate = buffer_config.sample_rate;
+        for v in &mut self.voices {
+            v.set_sample_rate(self.sample_rate);
+        }
+        true
+    }
+
+    fn reset(&mut self) {
+        for v in &mut self.voices {
+            *v = Voice::new(self.sample_rate);
+        }
+        self.crusher = BitCrusher::default();
+    }
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
+        // Drain GUI keyboard events first.
+        while let Some(ev) = self.note_queue.pop() {
+            match ev {
+                GuiNoteEvent::On { note, velocity } => self.handle_note_on(note, velocity),
+                GuiNoteEvent::Off { note } => self.handle_note_off(note),
+            }
+        }
+
+        let snapshot = self.params.snapshot();
+        let mut next_event = context.next_event();
+        let num_samples = buffer.samples();
+
+        for (sample_idx, channels) in buffer.iter_samples().enumerate() {
+            // Process MIDI events scheduled at this sample.
+            while let Some(ev) = next_event {
+                if ev.timing() as usize != sample_idx {
+                    break;
+                }
+                match ev {
+                    NoteEvent::NoteOn { note, velocity, .. } => {
+                        self.handle_note_on(note, velocity);
+                    }
+                    NoteEvent::NoteOff { note, .. } => {
+                        self.handle_note_off(note);
+                    }
+                    _ => {}
+                }
+                next_event = context.next_event();
+            }
+
+            let gain = self.params.gain.smoothed.next();
+            let mut mix = 0.0_f32;
+            for v in &mut self.voices {
+                mix += v.tick(&snapshot, &mut self.crusher);
+            }
+            // Light limiter to avoid clipping at full polyphony.
+            let out = (mix * gain).clamp(-1.0, 1.0);
+            for s in channels {
+                *s = out;
+            }
+        }
+
+        let _ = num_samples;
+        ProcessStatus::KeepAlive
+    }
+}
+
+impl ClapPlugin for MinMaxSynth {
+    const CLAP_ID: &'static str = "com.persy.min_max_synth";
+    const CLAP_DESCRIPTION: Option<&'static str> =
+        Some("Retro chiptune synthesizer with embedded percussion samples");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::Instrument,
+        ClapFeature::Synthesizer,
+        ClapFeature::Stereo,
+    ];
+}
+
+impl Vst3Plugin for MinMaxSynth {
+    const VST3_CLASS_ID: [u8; 16] = *b"PersyMinMaxSyn01";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
+}
+
+nih_export_clap!(MinMaxSynth);
+nih_export_vst3!(MinMaxSynth);

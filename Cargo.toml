@@ -1,0 +1,36 @@
+[package]
+name = "min_max_synth"
+version = "0.1.0"
+edition = "2021"
+authors = ["Persy"]
+license = "MIT"
+description = "Retro chiptune synthesizer (NES/Gameboy/Genesis) with embedded sample percussion"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "min_max_standalone"
+path = "src/bin/standalone.rs"
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs", "standalone"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+crossbeam-queue = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+parking_lot = "0.12"
+atomic_float = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1   # audio dsp is slow without some optimization
+
+[profile.dev.package."*"]
+opt-level = 3
