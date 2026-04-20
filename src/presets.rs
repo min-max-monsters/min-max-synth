@@ -19,6 +19,7 @@ pub const PRESET_NAMES: &[&str] = &[
 /// Apply preset `idx` (matching `PRESET_NAMES`) using the supplied `ParamSetter`
 /// so host automation/undo work correctly.
 pub fn apply_preset_with_setter(idx: usize, p: &SynthParams, s: &ParamSetter) {
+    reset_to_defaults(p, s);
     match idx {
         0 => nes_square_lead(p, s),
         1 => nes_triangle_bass(p, s),
@@ -30,6 +31,35 @@ pub fn apply_preset_with_setter(idx: usize, p: &SynthParams, s: &ParamSetter) {
         7 => drum_kit(p, s),
         8 => laser(p, s),
         _ => {}
+    }
+}
+
+/// Reset every non-cosmetic parameter to a known baseline so presets don't
+/// inherit leftover state from whatever was previously loaded.
+fn reset_to_defaults(p: &SynthParams, s: &ParamSetter) {
+    s.set_parameter(&p.pulse_duty, 0.5);
+    s.set_parameter(&p.noise_short, false);
+    s.set_parameter(&p.fm_ratio, 2.0);
+    s.set_parameter(&p.fm_index, 1.5);
+    s.set_parameter(&p.duty_lfo_rate, 4.0);
+    s.set_parameter(&p.duty_lfo_depth, 0.0);
+    s.set_parameter(&p.vibrato_rate, 5.0);
+    s.set_parameter(&p.vibrato_depth, 0.0);
+    s.set_parameter(&p.vibrato_delay, 0.0);
+    s.set_parameter(&p.sweep_semi, 0.0);
+    s.set_parameter(&p.sweep_time, 0.0);
+    s.set_parameter(&p.mono, false);
+    s.set_parameter(&p.arp_rate, 0.0);
+    s.set_parameter(&p.bit_depth, 16.0);
+    s.set_parameter(&p.bit_rate, 44_100.0);
+    s.set_parameter(&p.fine_tune, 0.0);
+    s.set_parameter(&p.octave, 0);
+    s.set_parameter(&p.drum_mode, false);
+    s.set_parameter(&p.drum_pitch, true);
+    for i in 0..8 {
+        s.set_parameter(p.drum_tune(i), 0.0);
+        s.set_parameter(p.drum_decay(i), 1.0);
+        s.set_parameter(p.drum_level(i), 1.0);
     }
 }
 

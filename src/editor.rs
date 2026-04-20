@@ -75,7 +75,11 @@ pub fn create_editor(
             egui::CentralPanel::default()
                 .frame(main_frame)
                 .show(ctx, |ui| {
-                    draw_main(ui, &params, setter, state);
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            draw_main(ui, &params, setter, state);
+                        });
                 });
         },
     )
@@ -138,7 +142,7 @@ fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mu
                     ui.add(Knob::new(&params.fm_index, setter).with_label("FM IDX"));
                 });
                 ui.add_space(2.0);
-                led_toggle(ui, &params.noise_short, setter, "Short LFSR (NES)");
+                led_toggle(ui, &params.noise_short, setter, "Metallic noise");
             });
             ui.add_space(6.0);
             panel(ui, "DUTY LFO", palette::ACCENT, |ui| {

@@ -255,7 +255,11 @@ pub fn led_toggle(
     setter: &ParamSetter,
     label: &str,
 ) -> Response {
-    let total = vec2(64.0, 30.0);
+    let font = FontId::proportional(11.0);
+    let text_w = ui.fonts(|f| {
+        f.layout_no_wrap(label.to_string(), font.clone(), palette::TEXT).size().x
+    });
+    let total = vec2((text_w + 30.0).max(64.0), 30.0);
     let (rect, mut resp) = ui.allocate_exact_size(total, Sense::click());
     let on = param.modulated_normalized_value() >= 0.5;
 
@@ -290,7 +294,7 @@ pub fn led_toggle(
             Pos2::new(rect.min.x + 22.0, rect.center().y),
             Align2::LEFT_CENTER,
             label,
-            FontId::proportional(11.0),
+            font,
             palette::TEXT,
         );
     }
