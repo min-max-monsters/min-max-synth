@@ -75,7 +75,7 @@ jobs:
               run: |
                   set -euo pipefail
                   mkdir -p staging
-                  cp -R target/${{ matrix.target }}/release/bundled/. staging/ || true
+                  cp -R target/bundled/. staging/
                   if [ "${{ runner.os }}" = "Windows" ]; then
                     cp target/${{ matrix.target }}/release/min_max_standalone.exe staging/
                   else
