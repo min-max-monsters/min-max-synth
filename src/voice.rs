@@ -133,7 +133,11 @@ impl Voice {
 
     pub fn note_on(&mut self, note: u8, velocity: f32, params: &VoiceParams, age: u64) {
         self.note = Some(note);
-        self.velocity = velocity.clamp(0.0, 1.0);
+        // Reduced velocity sensitivity: full-velocity hits play at unity,
+        // but the quietest hits still come through at ~60% loudness so
+        // soft MIDI controllers don't disappear under the bus headroom.
+        let v = velocity.clamp(0.0, 1.0);
+        self.velocity = 0.6 + 0.4 * v;
         self.age = age;
         self.elapsed_samples = 0;
         self.current_pitch = note as f32;
