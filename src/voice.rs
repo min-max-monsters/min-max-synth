@@ -5,6 +5,7 @@ use crate::dsp::{
     midi_to_hz, Adsr, DrumParams, DrumVoice, FmOsc, Lfo, NoiseOsc, PulseOsc, SawOsc, Sweep,
     TriangleOsc, Waveform, WaveOsc,
 };
+use crate::params::LegatoMode;
 
 /// Snapshot of synth parameters seen by the voice for a render block.
 /// The voice never touches `nih-plug`'s `Params` directly.
@@ -28,8 +29,13 @@ pub struct VoiceParams {
     pub sweep_time: f32,
     pub mono: bool,
     pub arp_rate: f32,
+    pub legato_mode: LegatoMode,
+    /// Glide time in seconds (full pitch traversal target).
+    pub glide_time: f32,
     pub bit_depth: f32,
     pub bit_rate_hz: f32,
+    pub lp_cutoff: f32,
+    pub hp_cutoff: f32,
     pub fine_tune_cents: f32,
     pub octave_shift: i32,
     pub drum_mode: bool,
@@ -54,6 +60,11 @@ pub struct Voice {
     velocity: f32,
     age: u64, // for voice stealing
     elapsed_samples: u64,
+    /// Currently sounding pitch in MIDI semitones (may be fractional during
+    /// a glide). Initialised on note-on.
+    current_pitch: f32,
+    /// Target pitch in MIDI semitones — equals `note` unless gliding.
+    target_pitch: f32,
 
     // Oscillators (only one active at a time but kept around).
     pulse: PulseOsc,
@@ -84,6 +95,8 @@ impl Voice {
             velocity: 0.0,
             age: 0,
             elapsed_samples: 0,
+            current_pitch: 60.0,
+            target_pitch: 60.0,
             pulse: PulseOsc::default(),
             triangle: TriangleOsc::default(),
             wave: WaveOsc::default(),
@@ -123,6 +136,8 @@ impl Voice {
         self.velocity = velocity.clamp(0.0, 1.0);
         self.age = age;
         self.elapsed_samples = 0;
+        self.current_pitch = note as f32;
+        self.target_pitch = note as f32;
         self.pulse.reset();
         self.triangle.reset();
         self.wave.reset();
@@ -173,9 +188,22 @@ impl Voice {
 
     /// Change the playing pitch without retriggering the envelope or
     /// oscillator phases. Used for legato (mono mode) and arpeggio.
+    /// The `current_pitch` jumps immediately; callers that want a glide
+    /// should use `glide_to` instead.
     pub fn set_note(&mut self, note: u8) {
         if self.note.is_some() {
             self.note = Some(note);
+            self.current_pitch = note as f32;
+            self.target_pitch = note as f32;
+        }
+    }
+
+    /// Like `set_note` but leaves `current_pitch` alone so the voice can
+    /// glide toward the new pitch over `glide_time` seconds.
+    pub fn glide_to(&mut self, note: u8) {
+        if self.note.is_some() {
+            self.note = Some(note);
+            self.target_pitch = note as f32;
         }
     }
 
@@ -188,7 +216,7 @@ impl Voice {
     /// so this returns a clean per-voice signal.
     #[inline]
     pub fn tick(&mut self, params: &VoiceParams) -> f32 {
-        let Some(note) = self.note else { return 0.0 };
+        let Some(_note) = self.note else { return 0.0 };
 
         if self.is_drum {
             let i = self.drum_idx;
@@ -216,6 +244,27 @@ impl Voice {
             return 0.0;
         }
 
+        // Glide: ramp current_pitch toward target_pitch at a rate that
+        // covers one semitone per `glide_time/12` seconds (linear in
+        // semitones, which sounds musical for short glides).
+        if (self.current_pitch - self.target_pitch).abs() > 1e-4 {
+            if params.glide_time <= 0.0 {
+                self.current_pitch = self.target_pitch;
+            } else {
+                // Travel the full octave in glide_time; for shorter intervals
+                // this yields a proportionally shorter glide, which matches
+                // how analog portamento knobs behave.
+                let semis_per_sec = 12.0 / params.glide_time.max(1e-3);
+                let step = semis_per_sec / self.sample_rate;
+                let diff = self.target_pitch - self.current_pitch;
+                if diff.abs() <= step {
+                    self.current_pitch = self.target_pitch;
+                } else {
+                    self.current_pitch += step.copysign(diff);
+                }
+            }
+        }
+
         // Pitch chain: base note + octave + fine + vibrato + sweep.
         // Vibrato fades in smoothly over ~80 ms after the configured delay.
         let elapsed_s = self.elapsed_samples as f32 / self.sample_rate;
@@ -229,7 +278,7 @@ impl Voice {
             * params.vibrato_depth_semi
             * vib_gain;
         let sweep_offset = self.sweep.tick(self.sample_rate, params.sweep_semi, params.sweep_time);
-        let n = note as f32
+        let n = self.current_pitch
             + params.octave_shift as f32 * 12.0
             + params.fine_tune_cents / 100.0
             + vib

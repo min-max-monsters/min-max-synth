@@ -5,13 +5,13 @@
 pub mod dsp;
 pub mod editor;
 pub mod params;
-pub mod presets;
+pub mod preset_bank;
 pub mod samples;
 pub mod voice;
 pub mod widgets;
 
-use crate::dsp::BitCrusher;
-use crate::params::SynthParams;
+use crate::dsp::{BitCrusher, OnePoleHP, OnePoleLP};
+use crate::params::{LegatoMode, SynthParams};
 use crate::voice::Voice;
 use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::*;
@@ -34,6 +34,8 @@ pub struct MinMaxSynth {
     voices: Vec<Voice>,
     sample_rate: f32,
     crusher: BitCrusher,
+    lp: OnePoleLP,
+    hp: OnePoleHP,
     age_counter: u64,
     note_queue: Arc<ArrayQueue<GuiNoteEvent>>,
     /// Stack of currently held MIDI notes (oldest first). Used for mono mode
@@ -53,6 +55,8 @@ impl Default for MinMaxSynth {
             voices: (0..NUM_VOICES).map(|_| Voice::new(sr)).collect(),
             sample_rate: sr,
             crusher: BitCrusher::default(),
+            lp: OnePoleLP::default(),
+            hp: OnePoleHP::default(),
             age_counter: 0,
             note_queue: Arc::new(ArrayQueue::new(256)),
             held_notes: Vec::with_capacity(16),
@@ -79,12 +83,17 @@ impl MinMaxSynth {
         }
 
         if snapshot.mono && !snapshot.drum_mode {
-            // Mono: reuse voice 0. Legato pitch change if already playing,
-            // otherwise full retrigger.
+            // Mono: reuse voice 0. Behaviour depends on legato_mode:
+            //   Retrigger — always restart envelope and oscillator phases.
+            //   Legato    — swap pitch instantly without retriggering env.
+            //   Glide     — swap pitch with a portamento slide; no retrigger.
             self.arp_index = 0;
             self.arp_phase = 0.0;
-            if self.voices[0].is_pitched_active() {
-                self.voices[0].set_note(note);
+            if self.voices[0].is_pitched_active() && snapshot.legato_mode != LegatoMode::Retrigger {
+                match snapshot.legato_mode {
+                    LegatoMode::Glide => self.voices[0].glide_to(note),
+                    _ => self.voices[0].set_note(note),
+                }
             } else {
                 // Silence any other lingering voices first.
                 for v in self.voices.iter_mut().skip(1) {
@@ -120,7 +129,11 @@ impl MinMaxSynth {
             // Mono: only release when the stack is empty; otherwise fall back
             // to the previously held note.
             if let Some(&prev) = self.held_notes.last() {
-                self.voices[0].set_note(prev);
+                if snapshot.legato_mode == LegatoMode::Glide {
+                    self.voices[0].glide_to(prev);
+                } else {
+                    self.voices[0].set_note(prev);
+                }
             } else {
                 self.voices[0].note_off();
             }
@@ -141,11 +154,26 @@ impl Plugin for MinMaxSynth {
     const EMAIL: &'static str = "noreply@example.com";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
-        main_input_channels: None,
-        main_output_channels: std::num::NonZeroU32::new(2),
-        ..AudioIOLayout::const_default()
-    }];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
+        // Layout 0 — stereo (preferred for most devices / DAW hosts).
+        AudioIOLayout {
+            main_input_channels: None,
+            main_output_channels: std::num::NonZeroU32::new(2),
+            ..AudioIOLayout::const_default()
+        },
+        // Layout 1 — mono.
+        AudioIOLayout {
+            main_input_channels: None,
+            main_output_channels: std::num::NonZeroU32::new(1),
+            ..AudioIOLayout::const_default()
+        },
+        // Layout 2 — quad (e.g. 4-channel interfaces like UMC404HD).
+        AudioIOLayout {
+            main_input_channels: None,
+            main_output_channels: std::num::NonZeroU32::new(4),
+            ..AudioIOLayout::const_default()
+        },
+    ];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
@@ -179,6 +207,10 @@ impl Plugin for MinMaxSynth {
             *v = Voice::new(self.sample_rate);
         }
         self.crusher = BitCrusher::default();
+        self.lp.reset();
+        self.hp.reset();
+        self.lp.reset();
+        self.hp.reset();
     }
 
     fn process(
@@ -251,6 +283,9 @@ impl Plugin for MinMaxSynth {
                 snapshot.bit_rate_hz,
                 snapshot.bit_depth,
             );
+            // Output-stage RC filters (post-DAC, like real hardware).
+            mix = self.lp.process(mix, snapshot.lp_cutoff, self.sample_rate);
+            mix = self.hp.process(mix, snapshot.hp_cutoff, self.sample_rate);
             // Give the bus enough headroom that a few simultaneous full-scale
             // pulse voices don't immediately clip, then apply a cheap soft
             // clipper so anything still over the rails distorts musically

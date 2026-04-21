@@ -11,6 +11,7 @@ use std::f32::consts::TAU;
 pub mod palette {
     use nih_plug_egui::egui::Color32;
     pub const BG_DEEP: Color32 = Color32::from_rgb(14, 18, 22);
+    pub const BG_MID: Color32 = Color32::from_rgb(18, 24, 30);
     pub const BG_PANEL: Color32 = Color32::from_rgb(24, 30, 38);
     pub const BG_PANEL_HI: Color32 = Color32::from_rgb(34, 42, 52);
     pub const BORDER: Color32 = Color32::from_rgb(60, 76, 92);

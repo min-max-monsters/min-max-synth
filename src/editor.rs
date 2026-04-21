@@ -1,8 +1,10 @@
 //! Egui editor with a chiptune-flavoured layout: rotary knobs, LED toggles,
 //! grouped panels, and an on-screen + QWERTY piano keyboard.
 
-use crate::params::{SynthParams, WaveChoice};
-use crate::presets::{apply_preset_with_setter, PRESET_NAMES};
+use crate::params::{LegatoMode, SynthParams, WaveChoice};
+use crate::preset_bank::{
+    Category, ParamSnapshot, PresetBank, PresetMeta, System, Voicing,
+};
 use crate::samples::DrumKind;
 use crate::widgets::{apply_style, led_toggle, palette, panel, Knob, VSlider};
 use crate::GuiNoteEvent;
@@ -27,13 +29,34 @@ const TOP_ROW: &[(char, i32)] = &[
 pub struct EditorState {
     pressed: [bool; 128],
     base_note: i32,
-    selected_preset: usize,
     selected_drum: usize,
+    // Preset browser
+    pub bank: PresetBank,
+    pub browser_open: bool,
+    // Save dialog
+    pub save_dialog_open: bool,
+    pub save_name: String,
+    pub save_system: System,
+    pub save_category: Category,
+    pub save_voicing: Voicing,
 }
 
 impl Default for EditorState {
     fn default() -> Self {
-        Self { pressed: [false; 128], base_note: 60, selected_preset: 0, selected_drum: 0 }
+        let mut bank = PresetBank::new();
+        bank.load_user_presets();
+        Self {
+            pressed: [false; 128],
+            base_note: 60,
+            selected_drum: 0,
+            bank,
+            browser_open: false,
+            save_dialog_open: false,
+            save_name: String::new(),
+            save_system: System::Generic,
+            save_category: Category::Lead,
+            save_voicing: Voicing::Poly,
+        }
     }
 }
 
@@ -68,6 +91,28 @@ pub fn create_editor(
                 .show(ctx, |ui| {
                     draw_keyboard(ui, state);
                 });
+
+            // Preset browser side panel
+            if state.browser_open {
+                let browser_frame = egui::Frame::default()
+                    .fill(palette::BG_MID)
+                    .inner_margin(egui::Margin::same(6))
+                    .stroke(Stroke::new(1.0, palette::BORDER));
+                egui::SidePanel::left("preset_browser")
+                    .frame(browser_frame)
+                    .default_width(280.0)
+                    .min_width(240.0)
+                    .max_width(360.0)
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        draw_preset_browser(ui, &params, setter, state);
+                    });
+            }
+
+            // Save dialog window
+            if state.save_dialog_open {
+                draw_save_dialog(ctx, &params, setter, state);
+            }
 
             let main_frame = egui::Frame::default()
                 .fill(palette::BG_DEEP)
@@ -104,20 +149,42 @@ fn draw_header(
                 .size(12.0),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Load").on_hover_text("Re-apply selected preset").clicked() {
-                apply_preset_with_setter(state.selected_preset, params, setter);
+            // Save button
+            if ui.button("💾 Save").on_hover_text("Save current settings as user preset").clicked() {
+                state.save_dialog_open = !state.save_dialog_open;
             }
-            let current = PRESET_NAMES.get(state.selected_preset).copied().unwrap_or("—");
-            egui::ComboBox::from_id_salt("preset_combo")
-                .selected_text(current)
-                .width(220.0)
-                .show_ui(ui, |ui| {
-                    for (i, name) in PRESET_NAMES.iter().enumerate() {
-                        if ui.selectable_value(&mut state.selected_preset, i, *name).clicked() {
-                            apply_preset_with_setter(i, params, setter);
-                        }
-                    }
-                });
+
+            // Browse toggle
+            let browse_label = if state.browser_open { "✕ Browser" } else { "☰ Browser" };
+            if ui.button(browse_label).clicked() {
+                state.browser_open = !state.browser_open;
+            }
+
+            // Next
+            if ui.button("▶").on_hover_text("Next preset").clicked() {
+                state.bank.next();
+                apply_bank_preset(state, params, setter);
+            }
+
+            // Current preset name
+            let name = state
+                .bank
+                .current_entry()
+                .map(|e| e.name.as_str())
+                .unwrap_or("—");
+            ui.label(
+                RichText::new(name)
+                    .color(palette::TEXT)
+                    .monospace()
+                    .size(12.0),
+            );
+
+            // Prev
+            if ui.button("◀").on_hover_text("Previous preset").clicked() {
+                state.bank.prev();
+                apply_bank_preset(state, params, setter);
+            }
+
             ui.label(RichText::new("PRESET").color(palette::TEXT_DIM).size(11.0));
             ui.add_space(12.0);
             led_toggle(ui, &params.drum_mode, setter, "DRUM MODE");
@@ -210,7 +277,9 @@ fn draw_synth_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                 ui.horizontal(|ui| {
                     led_toggle(ui, &params.mono, setter, "Monophonic");
                     ui.add(Knob::new(&params.arp_rate, setter).with_label("ARP RATE"));
+                    ui.add(Knob::new(&params.glide_time, setter).with_label("GLIDE"));
                 });
+                draw_legato_buttons(ui, params, setter);
             });
             ui.add_space(6.0);
             panel(ui, "BITCRUSH", palette::ACCENT, |ui| {
@@ -218,6 +287,14 @@ fn draw_synth_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                     ui.add(Knob::new(&params.bit_depth, setter).with_label("BITS"));
                     ui.add(Knob::new(&params.bit_rate, setter).with_label("RATE"));
                 });
+            });
+            ui.add_space(6.0);
+            panel(ui, "OUTPUT FILTER", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.lp_cutoff, setter).with_label("LP CUT"));
+                    ui.add(Knob::new(&params.hp_cutoff, setter).with_label("HP CUT"));
+                });
+                draw_filter_system_buttons(ui, params, setter);
             });
         });
     });
@@ -304,10 +381,286 @@ fn draw_drum_main(
                     ui.add(Knob::new(&params.gain, setter).with_label("GAIN").with_diameter(54.0));
                     ui.add(Knob::new(&params.bit_depth, setter).with_label("BITS"));
                     ui.add(Knob::new(&params.bit_rate, setter).with_label("RATE"));
+                    ui.add(Knob::new(&params.lp_cutoff, setter).with_label("LP CUT"));
+                    ui.add(Knob::new(&params.hp_cutoff, setter).with_label("HP CUT"));
                 });
+                draw_filter_system_buttons(ui, params, setter);
             });
         });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Preset browser & save dialog
+// ---------------------------------------------------------------------------
+
+/// Apply the currently selected bank preset to the plugin params.
+fn apply_bank_preset(state: &EditorState, params: &SynthParams, setter: &ParamSetter) {
+    if let Some(entry) = state.bank.current_entry() {
+        entry.snapshot.apply(params, setter);
+    }
+}
+
+/// The left side-panel preset browser: filter buttons, search, scrollable list.
+fn draw_preset_browser(
+    ui: &mut Ui,
+    params: &SynthParams,
+    setter: &ParamSetter,
+    state: &mut EditorState,
+) {
+    ui.label(RichText::new("PRESET BROWSER").color(palette::ACCENT).size(12.0).strong());
+    ui.add_space(4.0);
+
+    // Search bar
+    let search_response = ui.add(
+        egui::TextEdit::singleline(&mut state.bank.search_text)
+            .hint_text("Search…")
+            .desired_width(f32::INFINITY)
+            .text_color(palette::TEXT),
+    );
+    if search_response.changed() {
+        state.bank.refilter();
+    }
+    ui.add_space(4.0);
+
+    // System filter
+    ui.label(RichText::new("SYSTEM").color(palette::TEXT_DIM).size(9.0));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
+        ui.spacing_mut().button_padding = egui::vec2(3.0, 1.0);
+        // "All" button
+        let all_sel = state.bank.filter_system.is_none();
+        if tag_button(ui, "ALL", all_sel).clicked() {
+            state.bank.filter_system = None;
+            state.bank.refilter();
+        }
+        for &sys in System::ALL {
+            let sel = state.bank.filter_system == Some(sys);
+            if tag_button(ui, sys.label(), sel).clicked() {
+                state.bank.filter_system = if sel { None } else { Some(sys) };
+                state.bank.refilter();
+            }
+        }
+    });
+    ui.add_space(2.0);
+
+    // Category filter
+    ui.label(RichText::new("CATEGORY").color(palette::TEXT_DIM).size(9.0));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
+        ui.spacing_mut().button_padding = egui::vec2(3.0, 1.0);
+        let all_sel = state.bank.filter_category.is_none();
+        if tag_button(ui, "ALL", all_sel).clicked() {
+            state.bank.filter_category = None;
+            state.bank.refilter();
+        }
+        for &cat in Category::ALL {
+            let sel = state.bank.filter_category == Some(cat);
+            if tag_button(ui, cat.label(), sel).clicked() {
+                state.bank.filter_category = if sel { None } else { Some(cat) };
+                state.bank.refilter();
+            }
+        }
+    });
+    ui.add_space(2.0);
+
+    // Voicing filter
+    ui.label(RichText::new("VOICING").color(palette::TEXT_DIM).size(9.0));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
+        ui.spacing_mut().button_padding = egui::vec2(3.0, 1.0);
+        let all_sel = state.bank.filter_voicing.is_none();
+        if tag_button(ui, "ALL", all_sel).clicked() {
+            state.bank.filter_voicing = None;
+            state.bank.refilter();
+        }
+        for &voi in Voicing::ALL {
+            let sel = state.bank.filter_voicing == Some(voi);
+            if tag_button(ui, voi.label(), sel).clicked() {
+                state.bank.filter_voicing = if sel { None } else { Some(voi) };
+                state.bank.refilter();
+            }
+        }
+    });
+    ui.add_space(2.0);
+
+    // Source filter (factory / user)
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        if tag_button(ui, "FACTORY", state.bank.show_factory).clicked() {
+            state.bank.show_factory = !state.bank.show_factory;
+            state.bank.refilter();
+        }
+        if tag_button(ui, "USER", state.bank.show_user).clicked() {
+            state.bank.show_user = !state.bank.show_user;
+            state.bank.refilter();
+        }
+        ui.label(
+            RichText::new(format!("{} presets", state.bank.filtered.len()))
+                .color(palette::TEXT_DIM)
+                .size(9.0),
+        );
+    });
+
+    ui.add_space(4.0);
+    ui.separator();
+
+    // Scrollable preset list
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let mut clicked_idx: Option<usize> = None;
+            let mut delete_idx: Option<usize> = None;
+            // Collect what we need to avoid borrow conflicts.
+            let items: Vec<(usize, usize, String, bool, bool)> = state
+                .bank
+                .filtered
+                .iter()
+                .enumerate()
+                .map(|(fi, &ei)| {
+                    let e = &state.bank.entries[ei];
+                    let sel = fi == state.bank.selected;
+                    (fi, ei, e.name.clone(), e.is_factory, sel)
+                })
+                .collect();
+            let avail_w = ui.available_width();
+            for (fi, entry_idx, name, is_factory, selected) in &items {
+                let bg = if *selected { palette::ACCENT_DIM } else { Color32::TRANSPARENT };
+                let fg = if *selected {
+                    palette::ACCENT
+                } else if *is_factory {
+                    palette::TEXT
+                } else {
+                    Color32::from_rgb(180, 200, 255)
+                };
+                let label_text = if *is_factory {
+                    name.clone()
+                } else {
+                    format!("⬡ {}", name)
+                };
+                let resp = ui.add(
+                    egui::Button::new(
+                        RichText::new(&label_text).color(fg).monospace().size(10.0),
+                    )
+                    .fill(bg)
+                    .stroke(Stroke::NONE)
+                    .min_size(egui::vec2(avail_w, 18.0)),
+                );
+                if resp.clicked() {
+                    clicked_idx = Some(*fi);
+                }
+                if !is_factory {
+                    resp.context_menu(|ui| {
+                        if ui.button("Delete preset").clicked() {
+                            delete_idx = Some(*entry_idx);
+                            ui.close_menu();
+                        }
+                    });
+                }
+            }
+            if let Some(fi) = clicked_idx {
+                state.bank.selected = fi;
+                apply_bank_preset(state, params, setter);
+            }
+            if let Some(ei) = delete_idx {
+                state.bank.delete_user_preset(ei);
+            }
+        });
+}
+
+/// Draw the save-preset dialog as a floating egui window.
+fn draw_save_dialog(
+    ctx: &egui::Context,
+    params: &SynthParams,
+    _setter: &ParamSetter,
+    state: &mut EditorState,
+) {
+    let mut open = state.save_dialog_open;
+    egui::Window::new("Save Preset")
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Name:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.save_name)
+                        .desired_width(200.0)
+                        .text_color(palette::TEXT),
+                );
+            });
+            ui.add_space(4.0);
+
+            // System picker
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("System:").size(11.0));
+                for &sys in System::ALL {
+                    let sel = state.save_system == sys;
+                    if tag_button(ui, sys.label(), sel).clicked() {
+                        state.save_system = sys;
+                    }
+                }
+            });
+
+            // Category picker
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Category:").size(11.0));
+                for &cat in Category::ALL {
+                    let sel = state.save_category == cat;
+                    if tag_button(ui, cat.label(), sel).clicked() {
+                        state.save_category = cat;
+                    }
+                }
+            });
+
+            // Voicing picker
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Voicing:").size(11.0));
+                for &voi in Voicing::ALL {
+                    let sel = state.save_voicing == voi;
+                    if tag_button(ui, voi.label(), sel).clicked() {
+                        state.save_voicing = voi;
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let name_ok = !state.save_name.trim().is_empty();
+                if ui
+                    .add_enabled(name_ok, egui::Button::new("Save"))
+                    .clicked()
+                {
+                    let meta = PresetMeta {
+                        system: state.save_system,
+                        category: state.save_category,
+                        voicing: state.save_voicing,
+                    };
+                    let snap = ParamSnapshot::capture(params);
+                    state
+                        .bank
+                        .save_user_preset(state.save_name.trim(), meta, snap);
+                    state.save_dialog_open = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    state.save_dialog_open = false;
+                }
+            });
+        });
+    state.save_dialog_open = open && state.save_dialog_open;
+}
+
+/// Reusable tag filter button.
+fn tag_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+    let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+    ui.add(
+        egui::Button::new(RichText::new(label).color(fg).monospace().size(9.0))
+            .fill(bg)
+            .stroke(Stroke::new(1.0, palette::BORDER))
+            .min_size(egui::vec2(0.0, 14.0)),
+    )
 }
 
 fn draw_waveform_picker(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
@@ -334,6 +687,75 @@ fn draw_waveform_picker(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter)
                 setter.begin_set_parameter(&params.waveform);
                 setter.set_parameter(&params.waveform, variant);
                 setter.end_set_parameter(&params.waveform);
+            }
+        }
+    });
+}
+
+/// Three-way Retrigger / Legato / Glide selector for mono mode.
+fn draw_legato_buttons(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    let choices = [
+        (LegatoMode::Retrigger, "RETRIG"),
+        (LegatoMode::Legato, "LEGATO"),
+        (LegatoMode::Glide, "GLIDE"),
+    ];
+    let current = params.legato_mode.value();
+    ui.horizontal(|ui| {
+        for (variant, label) in choices {
+            let selected = current == variant;
+            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+            let btn = egui::Button::new(RichText::new(label).color(fg).monospace().size(9.0))
+                .fill(bg)
+                .stroke(Stroke::new(1.0, palette::BORDER))
+                .min_size(egui::vec2(54.0, 18.0));
+            if ui.add(btn).clicked() {
+                setter.begin_set_parameter(&params.legato_mode);
+                setter.set_parameter(&params.legato_mode, variant);
+                setter.end_set_parameter(&params.legato_mode);
+            }
+        }
+    });
+}
+
+/// Small buttons that set LP + HP cutoffs to hardware-authentic values for a
+/// given retro system.  The currently-matching system (if any) is highlighted.
+fn draw_filter_system_buttons(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    // (label, lp_hz, hp_hz)
+    const SYSTEMS: &[(&str, f32, f32)] = &[
+        ("NES",   14_000.0, 37.0),
+        ("GB",     8_000.0, 20.0),
+        ("SNES",  16_000.0, 15.0),
+        ("GEN",   20_000.0, 10.0),
+        ("SID",   18_000.0, 15.0),
+        ("AMIGA",  7_000.0, 30.0),
+        ("PCSPK",  5_000.0, 100.0),
+        ("2600",   6_000.0, 40.0),
+        ("MSX",   12_000.0, 20.0),
+        ("ZX",    10_000.0, 50.0),
+        ("ARC",   16_000.0, 20.0),
+        ("OFF",   20_000.0,  0.0),
+    ];
+    let cur_lp = params.lp_cutoff.value();
+    let cur_hp = params.hp_cutoff.value();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
+        ui.spacing_mut().button_padding = egui::vec2(2.0, 0.0);
+        for &(label, lp, hp) in SYSTEMS {
+            let selected = (cur_lp - lp).abs() < 1.0 && (cur_hp - hp).abs() < 1.0;
+            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+            let btn = egui::Button::new(RichText::new(label).color(fg).monospace().size(8.5))
+                .fill(bg)
+                .stroke(Stroke::new(1.0, palette::BORDER))
+                .min_size(egui::vec2(0.0, 14.0));
+            if ui.add(btn).clicked() {
+                setter.begin_set_parameter(&params.lp_cutoff);
+                setter.set_parameter(&params.lp_cutoff, lp);
+                setter.end_set_parameter(&params.lp_cutoff);
+                setter.begin_set_parameter(&params.hp_cutoff);
+                setter.set_parameter(&params.hp_cutoff, hp);
+                setter.end_set_parameter(&params.hp_cutoff);
             }
         }
     });

@@ -42,6 +42,23 @@ impl WaveChoice {
     }
 }
 
+/// Mono note-transition behaviour. Only meaningful when `mono` is on.
+#[derive(Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegatoMode {
+    /// Each new note retriggers the envelope and oscillator phases (no legato).
+    #[id = "retrig"]
+    #[name = "Retrigger"]
+    Retrigger,
+    /// New notes change pitch instantly without retriggering the envelope.
+    #[id = "legato"]
+    #[name = "Legato"]
+    Legato,
+    /// Like Legato, but the pitch slides smoothly to the new note.
+    #[id = "glide"]
+    #[name = "Glide"]
+    Glide,
+}
+
 #[derive(Params)]
 pub struct SynthParams {
     /// Persisted GUI window size.
@@ -95,11 +112,19 @@ pub struct SynthParams {
     pub mono: BoolParam,
     #[id = "arp_rt"]
     pub arp_rate: FloatParam,
+    #[id = "legato"]
+    pub legato_mode: EnumParam<LegatoMode>,
+    #[id = "glide_t"]
+    pub glide_time: FloatParam,
 
     #[id = "bit_dp"]
     pub bit_depth: FloatParam,
     #[id = "bit_rt"]
     pub bit_rate: FloatParam,
+    #[id = "lp_hz"]
+    pub lp_cutoff: FloatParam,
+    #[id = "hp_hz"]
+    pub hp_cutoff: FloatParam,
 
     #[id = "tune"]
     pub fine_tune: FloatParam,
@@ -196,7 +221,7 @@ pub struct SynthParams {
 impl Default for SynthParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1280, 860),
+            editor_state: EguiState::from_size(1280, 880),
 
             gain: FloatParam::new(
                 "Gain",
@@ -257,6 +282,15 @@ impl Default for SynthParams {
             .with_unit(" Hz")
             .with_step_size(0.5),
 
+            legato_mode: EnumParam::new("Legato", LegatoMode::Retrigger),
+            glide_time: FloatParam::new(
+                "Glide Time",
+                60.0,
+                FloatRange::Skewed { min: 1.0, max: 2000.0, factor: FloatRange::skew_factor(-2.0) },
+            )
+            .with_unit(" ms")
+            .with_step_size(1.0),
+
             bit_depth: FloatParam::new("Bit Depth", 16.0, FloatRange::Linear { min: 1.0, max: 16.0 })
                 .with_unit(" bits").with_step_size(0.5),
             bit_rate: FloatParam::new(
@@ -265,6 +299,24 @@ impl Default for SynthParams {
                 FloatRange::Skewed { min: 1_000.0, max: 96_000.0, factor: FloatRange::skew_factor(-1.0) },
             )
             .with_unit(" Hz").with_step_size(100.0),
+
+            // Output-stage filters (6 dB/oct, one-pole RC).
+            // LP at max (20 kHz) = effectively off; HP at min (0) = off.
+            lp_cutoff: FloatParam::new(
+                "LP Cutoff",
+                20_000.0,
+                FloatRange::Skewed { min: 1_000.0, max: 20_000.0, factor: FloatRange::skew_factor(-1.0) },
+            )
+            .with_unit(" Hz")
+            .with_step_size(500.0),
+
+            hp_cutoff: FloatParam::new(
+                "HP Cutoff",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 500.0 },
+            )
+            .with_unit(" Hz")
+            .with_step_size(1.0),
 
             fine_tune: FloatParam::new("Fine Tune", 0.0, FloatRange::Linear { min: -100.0, max: 100.0 })
                 .with_unit(" cents").with_step_size(1.0),
@@ -479,8 +531,12 @@ impl SynthParams {
             sweep_time: self.sweep_time.value() / 1000.0,
             mono: self.mono.value(),
             arp_rate: self.arp_rate.value(),
+            legato_mode: self.legato_mode.value(),
+            glide_time: self.glide_time.value() / 1000.0,
             bit_depth: self.bit_depth.value(),
             bit_rate_hz: self.bit_rate.value(),
+            lp_cutoff: self.lp_cutoff.value(),
+            hp_cutoff: self.hp_cutoff.value(),
             fine_tune_cents: self.fine_tune.value(),
             octave_shift: self.octave.value(),
             drum_mode: self.drum_mode.value(),

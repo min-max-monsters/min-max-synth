@@ -560,6 +560,78 @@ impl DrumVoice {
 }
 
 // ---------------------------------------------------------------------------
+// One-pole filters (authentic 6 dB/oct RC rolloff)
+// ---------------------------------------------------------------------------
+
+/// One-pole lowpass filter — mimics the analog RC filter on retro DAC output
+/// stages. 6 dB/octave slope, zero resonance, dirt cheap.
+#[derive(Debug, Clone)]
+pub struct OnePoleLP {
+    y: f32,
+}
+
+impl Default for OnePoleLP {
+    fn default() -> Self {
+        Self { y: 0.0 }
+    }
+}
+
+impl OnePoleLP {
+    /// Process one sample. `cutoff` is in Hz.
+    /// When cutoff >= sample_rate * 0.5 the filter is effectively bypassed.
+    #[inline]
+    pub fn process(&mut self, input: f32, cutoff: f32, sample_rate: f32) -> f32 {
+        if cutoff >= sample_rate * 0.5 {
+            self.y = input;
+            return input;
+        }
+        let alpha = 1.0 - (-TAU * cutoff / sample_rate).exp();
+        self.y += alpha * (input - self.y);
+        self.y
+    }
+
+    pub fn reset(&mut self) {
+        self.y = 0.0;
+    }
+}
+
+/// One-pole highpass filter — mimics the DC-blocking capacitor on the NES
+/// mixer (~37 Hz) and similar retro output stages. 6 dB/octave slope.
+#[derive(Debug, Clone)]
+pub struct OnePoleHP {
+    x_prev: f32,
+    y: f32,
+}
+
+impl Default for OnePoleHP {
+    fn default() -> Self {
+        Self { x_prev: 0.0, y: 0.0 }
+    }
+}
+
+impl OnePoleHP {
+    /// Process one sample. `cutoff` is in Hz.
+    /// When cutoff <= 1.0 the filter is effectively bypassed.
+    #[inline]
+    pub fn process(&mut self, input: f32, cutoff: f32, sample_rate: f32) -> f32 {
+        if cutoff <= 1.0 {
+            self.x_prev = input;
+            self.y = input;
+            return input;
+        }
+        let alpha = (-TAU * cutoff / sample_rate).exp();
+        self.y = alpha * (self.y + input - self.x_prev);
+        self.x_prev = input;
+        self.y
+    }
+
+    pub fn reset(&mut self) {
+        self.x_prev = 0.0;
+        self.y = 0.0;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bitcrusher
 // ---------------------------------------------------------------------------
 
