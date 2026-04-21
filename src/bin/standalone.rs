@@ -6,7 +6,7 @@
 //! tries combinations of audio layout × sample rate × period size before
 //! falling back to the silent dummy backend.
 
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use midir::{MidiInput, MidiInputPort};
 use min_max_synth::MinMaxSynth;
 use nih_plug::prelude::*;
@@ -67,10 +67,16 @@ fn main() {
 
     for (layout, sr, period) in &combos {
         let args = build_args(native_backend, *layout, *sr, *period, &extra_args);
-        eprintln!(
-            "[standalone] Trying {native_backend} layout {} at {} Hz / {} samples …",
-            layout, sr, period
-        );
+        match period {
+            Some(p) => eprintln!(
+                "[standalone] Trying {native_backend} layout {} at {} Hz / {} samples …",
+                layout, sr, p
+            ),
+            None => eprintln!(
+                "[standalone] Trying {native_backend} layout {} at {} Hz (default buffer) …",
+                layout, sr
+            ),
+        }
         if nih_export_standalone_with_args::<MinMaxSynth, _>(args.into_iter()) {
             return;
         }
@@ -89,7 +95,8 @@ const LAYOUT_PRIORITY: &[usize] = &[0, 2, 1];
 
 /// Query the default output device and return a prioritised list of
 /// (audio_layout_index, sample_rate, period_size) triples.
-fn query_device_combos() -> Vec<(usize, u32, u32)> {
+/// `period_size` is `None` on Windows where WASAPI picks its own buffer size.
+fn query_device_combos() -> Vec<(usize, u32, Option<u32>)> {
     let host = cpal::default_host();
     let device = match host.default_output_device() {
         Some(d) => d,
@@ -123,7 +130,6 @@ fn query_device_combos() -> Vec<(usize, u32, u32)> {
     }
 
     let preferred_rates: &[u32] = &[48000, 44100, 96000, 192000, 88200];
-    let preferred_periods: &[u32] = &[512, 256, 1024];
 
     // Build combos: for each layout (in priority order), collect matching
     // (sample_rate, period_size) pairs.
@@ -144,8 +150,17 @@ fn query_device_combos() -> Vec<(usize, u32, u32)> {
                 .iter()
                 .any(|c| c.min_sample_rate() <= rate && rate <= c.max_sample_rate());
             if sr_ok {
-                for &period in preferred_periods {
-                    combos.push((layout_idx, sr, period));
+                if cfg!(target_os = "windows") {
+                    // On Windows, WASAPI may deliver a different buffer size
+                    // than requested.  nih-plug asserts `actual <= configured`
+                    // and advances its sample counter by `configured`, so the
+                    // period must match the real size.  Probe it.
+                    let period = probe_wasapi_buffer_size(&device, ch, sr);
+                    combos.push((layout_idx, sr, Some(period)));
+                } else {
+                    for &period in &[512u32, 256, 1024] {
+                        combos.push((layout_idx, sr, Some(period)));
+                    }
                 }
             }
         }
@@ -158,7 +173,7 @@ fn build_args(
     backend: &str,
     audio_layout: usize,
     sample_rate: u32,
-    period_size: u32,
+    period_size: Option<u32>,
     extra: &[String],
 ) -> Vec<String> {
     // nih_plug's --audio-layout is 1-based, so add 1 to our 0-based index.
@@ -170,11 +185,69 @@ fn build_args(
         (audio_layout + 1).to_string(),
         "--sample-rate".to_string(),
         sample_rate.to_string(),
-        "--period-size".to_string(),
-        period_size.to_string(),
     ];
+    if let Some(ps) = period_size {
+        args.push("--period-size".to_string());
+        args.push(ps.to_string());
+    }
     args.extend_from_slice(extra);
     args
+}
+
+/// Open a short-lived cpal output stream with `BufferSize::Fixed(512)` to
+/// discover the actual buffer size WASAPI will deliver (which may differ from
+/// the requested size).  We track the **maximum** frame count across several
+/// callbacks so we don't accidentally catch a smaller initial ramp-up buffer.
+///
+/// Falls back to 1024 if the probe fails.
+fn probe_wasapi_buffer_size(device: &cpal::Device, channels: u16, sample_rate: u32) -> u32 {
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    let config = cpal::StreamConfig {
+        channels,
+        sample_rate: cpal::SampleRate(sample_rate),
+        buffer_size: cpal::BufferSize::Fixed(512),
+    };
+
+    let max_frames = Arc::new(AtomicU32::new(0));
+    let mf = max_frames.clone();
+    let ch = channels as u32;
+
+    let stream = match device.build_output_stream(
+        &config,
+        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            let frames = data.len() as u32 / ch;
+            mf.fetch_max(frames, Ordering::Relaxed);
+        },
+        |err| eprintln!("[standalone] probe error: {err}"),
+        None,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[standalone] Could not probe buffer size: {e}");
+            return 1024;
+        }
+    };
+
+    if stream.play().is_err() {
+        return 1024;
+    }
+
+    // Let several callbacks fire so we see the steady-state size.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    drop(stream);
+
+    let observed = max_frames.load(Ordering::Relaxed);
+    if observed > 0 {
+        eprintln!("[standalone] Probed WASAPI buffer size: {observed} frames");
+        observed
+    } else {
+        eprintln!("[standalone] Probe returned 0, defaulting to 1024");
+        1024
+    }
 }
 
 /// Query connected MIDI input devices and return the name of the first
