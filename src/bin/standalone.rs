@@ -67,22 +67,16 @@ fn main() {
 
     for (layout, sr, period) in &combos {
         let args = build_args(native_backend, *layout, *sr, *period, &extra_args);
-        match period {
-            Some(p) => eprintln!(
-                "[standalone] Trying {native_backend} layout {} at {} Hz / {} samples …",
-                layout, sr, p
-            ),
-            None => eprintln!(
-                "[standalone] Trying {native_backend} layout {} at {} Hz (default buffer) …",
-                layout, sr
-            ),
-        }
+        eprintln!(
+            "[standalone] Trying {native_backend} layout {} at {} Hz / {} samples …",
+            layout, sr, period
+        );
         if nih_export_standalone_with_args::<MinMaxSynth, _>(args.into_iter()) {
             return;
         }
     }
 
-    // None of the detected configs worked — fall back to `auto`.
+    // None of the detected configs worked — fall back to auto.
     eprintln!("[standalone] All {native_backend} configs failed, falling back to auto …");
     nih_export_standalone::<MinMaxSynth>();
 }
@@ -95,8 +89,7 @@ const LAYOUT_PRIORITY: &[usize] = &[0, 2, 1];
 
 /// Query the default output device and return a prioritised list of
 /// (audio_layout_index, sample_rate, period_size) triples.
-/// `period_size` is `None` on Windows where WASAPI picks its own buffer size.
-fn query_device_combos() -> Vec<(usize, u32, Option<u32>)> {
+fn query_device_combos() -> Vec<(usize, u32, u32)> {
     let host = cpal::default_host();
     let device = match host.default_output_device() {
         Some(d) => d,
@@ -151,15 +144,15 @@ fn query_device_combos() -> Vec<(usize, u32, Option<u32>)> {
                 .any(|c| c.min_sample_rate() <= rate && rate <= c.max_sample_rate());
             if sr_ok {
                 if cfg!(target_os = "windows") {
-                    // On Windows, WASAPI may deliver a different buffer size
-                    // than requested.  nih-plug asserts `actual <= configured`
-                    // and advances its sample counter by `configured`, so the
-                    // period must match the real size.  Probe it.
+                    // WASAPI ignores the requested buffer size and delivers
+                    // its own native period.  nih-plug panics when the actual
+                    // count exceeds the configured period, so we probe the
+                    // real WASAPI buffer size once and use that.
                     let period = probe_wasapi_buffer_size(&device, ch, sr);
-                    combos.push((layout_idx, sr, Some(period)));
+                    combos.push((layout_idx, sr, period));
                 } else {
                     for &period in &[512u32, 256, 1024] {
-                        combos.push((layout_idx, sr, Some(period)));
+                        combos.push((layout_idx, sr, period));
                     }
                 }
             }
@@ -173,7 +166,7 @@ fn build_args(
     backend: &str,
     audio_layout: usize,
     sample_rate: u32,
-    period_size: Option<u32>,
+    period_size: u32,
     extra: &[String],
 ) -> Vec<String> {
     // nih_plug's --audio-layout is 1-based, so add 1 to our 0-based index.
@@ -185,21 +178,17 @@ fn build_args(
         (audio_layout + 1).to_string(),
         "--sample-rate".to_string(),
         sample_rate.to_string(),
+        "--period-size".to_string(),
+        period_size.to_string(),
     ];
-    if let Some(ps) = period_size {
-        args.push("--period-size".to_string());
-        args.push(ps.to_string());
-    }
     args.extend_from_slice(extra);
     args
 }
 
-/// Open a short-lived cpal output stream with `BufferSize::Fixed(512)` to
-/// discover the actual buffer size WASAPI will deliver (which may differ from
-/// the requested size).  We track the **maximum** frame count across several
-/// callbacks so we don't accidentally catch a smaller initial ramp-up buffer.
-///
-/// Falls back to 1024 if the probe fails.
+/// Probe the real buffer size WASAPI will deliver by briefly opening a cpal
+/// stream with `BufferSize::Fixed(512)`.  WASAPI may return a completely
+/// different frame count; we capture the **maximum** across several callbacks.
+/// Falls back to 4096 if the probe fails.
 fn probe_wasapi_buffer_size(device: &cpal::Device, channels: u16, sample_rate: u32) -> u32 {
     use std::sync::{
         atomic::{AtomicU32, Ordering},
@@ -228,12 +217,12 @@ fn probe_wasapi_buffer_size(device: &cpal::Device, channels: u16, sample_rate: u
         Ok(s) => s,
         Err(e) => {
             eprintln!("[standalone] Could not probe buffer size: {e}");
-            return 1024;
+            return 4096;
         }
     };
 
     if stream.play().is_err() {
-        return 1024;
+        return 4096;
     }
 
     // Let several callbacks fire so we see the steady-state size.
@@ -245,13 +234,14 @@ fn probe_wasapi_buffer_size(device: &cpal::Device, channels: u16, sample_rate: u
         eprintln!("[standalone] Probed WASAPI buffer size: {observed} frames");
         observed
     } else {
-        eprintln!("[standalone] Probe returned 0, defaulting to 1024");
-        1024
+        eprintln!("[standalone] Probe returned 0, defaulting to 4096");
+        4096
     }
 }
 
-/// Query connected MIDI input devices and return the name of the first
-/// "real" one (skipping IAC virtual buses unless they're the only option).
+/// Query connected MIDI input devices.  If there are multiple, let the user
+/// pick from a numbered list in the console.  With only one device, auto-
+/// selects it.  Skips IAC / MIDI Through virtual ports when possible.
 fn pick_midi_input() -> Option<String> {
     let backend = MidiInput::new("min_max_standalone").ok()?;
     let ports: Vec<MidiInputPort> = backend.ports();
@@ -268,10 +258,38 @@ fn pick_midi_input() -> Option<String> {
         eprintln!("[standalone]   MIDI input: {n}");
     }
 
-    // Prefer hardware devices over IAC / virtual buses.
-    names
+    // Filter out virtual buses unless they're all we have.
+    let real: Vec<&String> = names
         .iter()
-        .find(|n| !n.to_lowercase().contains("iac") && !n.to_lowercase().contains("through"))
-        .cloned()
-        .or_else(|| names.first().cloned())
+        .filter(|n| {
+            let low = n.to_lowercase();
+            !low.contains("iac") && !low.contains("through")
+        })
+        .collect();
+    let candidates: Vec<&String> = if real.is_empty() { names.iter().collect() } else { real };
+
+    if candidates.len() == 1 {
+        return Some(candidates[0].clone());
+    }
+
+    // Multiple devices — ask the user to pick.
+    eprintln!();
+    eprintln!("[standalone] Multiple MIDI inputs found:");
+    for (i, name) in candidates.iter().enumerate() {
+        eprintln!("  {}: {}", i + 1, name);
+    }
+    eprint!("[standalone] Select MIDI input [1-{}]: ", candidates.len());
+
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_ok() {
+        if let Ok(idx) = line.trim().parse::<usize>() {
+            if idx >= 1 && idx <= candidates.len() {
+                return Some(candidates[idx - 1].clone());
+            }
+        }
+    }
+
+    // Invalid input — fall back to first candidate.
+    eprintln!("[standalone] Invalid selection, using: {}", candidates[0]);
+    Some(candidates[0].clone())
 }

@@ -239,11 +239,9 @@ impl Plugin for MinMaxSynth {
                 }
                 match ev {
                     NoteEvent::NoteOn { note, velocity, .. } => {
-                        nih_log!("MIDI NoteOn: note={note}, velocity={velocity:.2}, timing={sample_idx}, buf_size={num_samples}");
                         self.handle_note_on(note, velocity);
                     }
                     NoteEvent::NoteOff { note, .. } => {
-                        nih_log!("MIDI NoteOff: note={note}, timing={sample_idx}");
                         self.handle_note_off(note);
                     }
                     _ => {}
