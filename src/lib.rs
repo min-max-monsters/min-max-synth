@@ -15,10 +15,16 @@ use crate::params::{LegatoMode, SynthParams};
 use crate::voice::Voice;
 use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::*;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// Number of polyphonic voices.
 pub const NUM_VOICES: usize = 8;
+
+/// Global note queue for external MIDI connections (used by the standalone
+/// binary to forward events from all connected MIDI devices).  The audio
+/// thread drains this alongside the per-instance GUI queue.
+pub static EXTERNAL_NOTE_QUEUE: LazyLock<ArrayQueue<GuiNoteEvent>> =
+    LazyLock::new(|| ArrayQueue::new(1024));
 
 /// Note events produced by the on-screen / QWERTY keyboard in the editor and
 /// consumed by the audio thread.
@@ -221,6 +227,13 @@ impl Plugin for MinMaxSynth {
     ) -> ProcessStatus {
         // Drain GUI keyboard events first.
         while let Some(ev) = self.note_queue.pop() {
+            match ev {
+                GuiNoteEvent::On { note, velocity } => self.handle_note_on(note, velocity),
+                GuiNoteEvent::Off { note } => self.handle_note_off(note),
+            }
+        }
+        // Drain external MIDI events (standalone multi-device connections).
+        while let Some(ev) = EXTERNAL_NOTE_QUEUE.pop() {
             match ev {
                 GuiNoteEvent::On { note, velocity } => self.handle_note_on(note, velocity),
                 GuiNoteEvent::Off { note } => self.handle_note_off(note),

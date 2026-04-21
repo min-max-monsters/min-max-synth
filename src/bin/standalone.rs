@@ -38,15 +38,21 @@ fn main() {
 
     // Auto-detect a MIDI input if the user didn't specify one.
     let user_set_midi = extra_args.iter().any(|a| a == "--midi-input");
-    if !user_set_midi {
-        if let Some(name) = pick_midi_input() {
-            eprintln!("[standalone] Auto-connecting MIDI input: {name}");
-            extra_args.push("--midi-input".to_string());
-            extra_args.push(name);
-        } else {
-            eprintln!("[standalone] No MIDI input devices found (use --midi-input \"\" to list).");
-        }
-    }
+    // Keep MIDI connections alive for the lifetime of main() — dropping
+    // them would close the ports.
+    let _midi_connections = if !user_set_midi {
+        // Force-initialize the global note queue on the main thread so the
+        // LazyLock allocation doesn't happen on the real-time audio thread
+        // (which would trip nih-plug's assert_no_alloc guard).
+        let _ = &*min_max_synth::EXTERNAL_NOTE_QUEUE;
+
+        // Connect to ALL MIDI inputs via midir, forwarding events to the
+        // plugin's global queue.  This way every controller works out of
+        // the box without a terminal prompt.
+        connect_all_midi_inputs()
+    } else {
+        Vec::new()
+    };
 
     // Query the default output device for configs it actually supports.
     let combos = query_device_combos();
@@ -239,14 +245,20 @@ fn probe_wasapi_buffer_size(device: &cpal::Device, channels: u16, sample_rate: u
     }
 }
 
-/// Query connected MIDI input devices.  If there are multiple, let the user
-/// pick from a numbered list in the console.  With only one device, auto-
-/// selects it.  Skips IAC / MIDI Through virtual ports when possible.
-fn pick_midi_input() -> Option<String> {
-    let backend = MidiInput::new("min_max_standalone").ok()?;
+/// Connect to every available MIDI input device via midir and forward note
+/// events to the plugin's global `EXTERNAL_NOTE_QUEUE`.  Returns the live
+/// connections (dropping them would close the ports).
+fn connect_all_midi_inputs() -> Vec<midir::MidiInputConnection<()>> {
+    use min_max_synth::{GuiNoteEvent, EXTERNAL_NOTE_QUEUE};
+
+    let backend = match MidiInput::new("min_max_standalone_scan") {
+        Ok(b) => b,
+        Err(_) => return Vec::new(),
+    };
     let ports: Vec<MidiInputPort> = backend.ports();
     if ports.is_empty() {
-        return None;
+        eprintln!("[standalone] No MIDI input devices found.");
+        return Vec::new();
     }
 
     let names: Vec<String> = ports
@@ -254,42 +266,58 @@ fn pick_midi_input() -> Option<String> {
         .filter_map(|p| backend.port_name(p).ok())
         .collect();
 
-    for n in &names {
-        eprintln!("[standalone]   MIDI input: {n}");
-    }
+    let mut connections = Vec::new();
+    for (port, name) in ports.iter().zip(names.iter()) {
+        // Skip virtual / loopback ports.
+        let low = name.to_lowercase();
+        if low.contains("iac") || low.contains("through") {
+            continue;
+        }
 
-    // Filter out virtual buses unless they're all we have.
-    let real: Vec<&String> = names
-        .iter()
-        .filter(|n| {
-            let low = n.to_lowercase();
-            !low.contains("iac") && !low.contains("through")
-        })
-        .collect();
-    let candidates: Vec<&String> = if real.is_empty() { names.iter().collect() } else { real };
+        // Each MidiInput can only open one port, so create a fresh one.
+        let input = match MidiInput::new(&format!("min_max_{name}")) {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
 
-    if candidates.len() == 1 {
-        return Some(candidates[0].clone());
-    }
-
-    // Multiple devices — ask the user to pick.
-    eprintln!();
-    eprintln!("[standalone] Multiple MIDI inputs found:");
-    for (i, name) in candidates.iter().enumerate() {
-        eprintln!("  {}: {}", i + 1, name);
-    }
-    eprint!("[standalone] Select MIDI input [1-{}]: ", candidates.len());
-
-    let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_ok() {
-        if let Ok(idx) = line.trim().parse::<usize>() {
-            if idx >= 1 && idx <= candidates.len() {
-                return Some(candidates[idx - 1].clone());
+        match input.connect(
+            port,
+            &format!("min_max_{name}"),
+            move |_stamp, message, _| {
+                // Parse raw MIDI bytes into NoteOn / NoteOff.
+                if message.len() >= 3 {
+                    let status = message[0] & 0xF0;
+                    let note = message[1];
+                    let vel = message[2];
+                    match status {
+                        0x90 if vel > 0 => {
+                            let _ = EXTERNAL_NOTE_QUEUE.push(GuiNoteEvent::On {
+                                note,
+                                velocity: vel as f32 / 127.0,
+                            });
+                        }
+                        0x80 | 0x90 => {
+                            let _ = EXTERNAL_NOTE_QUEUE.push(GuiNoteEvent::Off { note });
+                        }
+                        _ => {}
+                    }
+                }
+            },
+            (),
+        ) {
+            Ok(conn) => {
+                eprintln!("[standalone] Connected MIDI input: {name}");
+                connections.push(conn);
+            }
+            Err(e) => {
+                eprintln!("[standalone] Failed to connect MIDI input {name}: {e}");
             }
         }
     }
 
-    // Invalid input — fall back to first candidate.
-    eprintln!("[standalone] Invalid selection, using: {}", candidates[0]);
-    Some(candidates[0].clone())
+    if connections.is_empty() {
+        eprintln!("[standalone] No MIDI inputs connected.");
+    }
+
+    connections
 }
