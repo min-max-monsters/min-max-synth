@@ -194,8 +194,26 @@ pub struct ParamSnapshot {
     pub octave: i32,
     pub drum_mode: bool,
     pub drum_pitch: bool,
+    #[serde(default)]
+    pub speech_mode: bool,
+    #[serde(default)]
+    pub phoneme: i32,
+    #[serde(default)]
+    pub speech_buzz: f32,
+    #[serde(default)]
+    pub speech_seq_len: i32,
+    #[serde(default = "default_speech_step_ms")]
+    pub speech_step_ms: f32,
+    #[serde(default)]
+    pub speech_seq_loop: bool,
+    #[serde(default)]
+    pub speech_seq: Vec<i32>,
     // Per-drum slots (8 × 9 params = 72 values)
     pub drums: Vec<DrumSlotSnapshot>,
+}
+
+fn default_speech_step_ms() -> f32 {
+    120.0
 }
 
 fn default_legato_mode() -> i32 {
@@ -269,6 +287,13 @@ impl ParamSnapshot {
             octave: p.octave.unmodulated_plain_value(),
             drum_mode: p.drum_mode.unmodulated_plain_value(),
             drum_pitch: p.drum_pitch.unmodulated_plain_value(),
+            speech_mode: p.speech_mode.unmodulated_plain_value(),
+            phoneme: p.phoneme.unmodulated_plain_value(),
+            speech_buzz: p.speech_buzz.unmodulated_plain_value(),
+            speech_seq_len: p.speech_seq_len.unmodulated_plain_value(),
+            speech_step_ms: p.speech_step_ms.unmodulated_plain_value(),
+            speech_seq_loop: p.speech_seq_loop.unmodulated_plain_value(),
+            speech_seq: (0..8).map(|i| p.sq(i).unmodulated_plain_value()).collect(),
             drums,
         }
     }
@@ -319,6 +344,15 @@ impl ParamSnapshot {
         s.set_parameter(&p.octave, self.octave);
         s.set_parameter(&p.drum_mode, self.drum_mode);
         s.set_parameter(&p.drum_pitch, self.drum_pitch);
+        s.set_parameter(&p.speech_mode, self.speech_mode);
+        s.set_parameter(&p.phoneme, self.phoneme);
+        s.set_parameter(&p.speech_buzz, self.speech_buzz);
+        s.set_parameter(&p.speech_seq_len, self.speech_seq_len);
+        s.set_parameter(&p.speech_step_ms, self.speech_step_ms);
+        s.set_parameter(&p.speech_seq_loop, self.speech_seq_loop);
+        for (i, &ph) in self.speech_seq.iter().take(8).enumerate() {
+            s.set_parameter(p.sq(i), ph);
+        }
         for (i, d) in self.drums.iter().enumerate().take(8) {
             s.set_parameter(p.d_wave(i), d.wave);
             s.set_parameter(p.d_freq(i), d.freq);

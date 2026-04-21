@@ -663,6 +663,370 @@ impl BitCrusher {
 }
 
 // ---------------------------------------------------------------------------
+// Formant speech synthesizer (Speak & Spell / early TTS inspired)
+// ---------------------------------------------------------------------------
+
+/// Number of formant resonators per voice.
+const NUM_FORMANTS: usize = 4;
+
+/// Number of built-in phonemes.
+pub const NUM_PHONEMES: usize = 36;
+
+/// Phoneme identity for the speech mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phoneme {
+    // Vowels (0–9)
+    Ah = 0,   // "father"
+    Ee = 1,   // "see"
+    Ih = 2,   // "sit"
+    Eh = 3,   // "bed"
+    Ae = 4,   // "cat"
+    Uh = 5,   // "but"
+    Oh = 6,   // "go"
+    Oo = 7,   // "boot"
+    Aw = 8,   // "law"
+    Er = 9,   // "her"
+    // Nasals (10–11)
+    Mm = 10,
+    Nn = 11,
+    // Liquids (12–13)
+    Ll = 12,
+    Rr = 13,
+    // Fricatives (14–16)
+    Ss = 14,
+    Sh = 15,
+    Ff = 16,
+    // Voiced fricatives (17–18)
+    Zz = 17,
+    Vv = 18,
+    // Stops / plosives (19–22) — modelled as brief silence + noise burst
+    Bb = 19,  // voiced bilabial
+    Dd = 20,  // voiced alveolar
+    Gg = 21,  // voiced velar
+    Kk = 22,  // unvoiced velar
+    // Silence (23) — for gaps between consonants
+    Sil = 23,
+    // Aspirate / glottal (24)
+    Hh = 24,  // breathy "h" sound
+    // Unvoiced alveolar stop (25)
+    Tt = 25,
+    // Diphthongs (26–28)
+    Ay = 26,  // "my"
+    Ow = 27,  // "now"
+    Ey = 28,  // "day"
+    // Unvoiced bilabial stop (29)
+    Pp = 29,
+    // Semivowels (30–31)
+    Ww = 30,  // "we"
+    Yy = 31,  // "yes"
+    // Velar nasal (32)
+    Ng = 32,  // "sing"
+    // Affricate (33)
+    Ch = 33,  // "church"
+    // Dental fricatives (34–35)
+    Th = 34,  // "thin" (unvoiced)
+    Dh = 35,  // "the" (voiced)
+}
+
+/// Phoneme spec: (freq, bw, amplitude) for each of 4 formants, plus
+/// voicing (0.0 = noise, 1.0 = voiced) and overall gain.
+#[derive(Debug, Clone, Copy)]
+struct PhonemeSpec {
+    formants: [(f32, f32, f32); NUM_FORMANTS], // (freq, bandwidth, amplitude)
+    voiced: f32,
+    gain: f32,
+}
+
+impl Phoneme {
+    pub fn from_index(i: usize) -> Self {
+        match i {
+            0 => Self::Ah,  1 => Self::Ee,  2 => Self::Ih,  3 => Self::Eh,
+            4 => Self::Ae,  5 => Self::Uh,  6 => Self::Oh,  7 => Self::Oo,
+            8 => Self::Aw,  9 => Self::Er,  10 => Self::Mm, 11 => Self::Nn,
+            12 => Self::Ll, 13 => Self::Rr, 14 => Self::Ss, 15 => Self::Sh,
+            16 => Self::Ff, 17 => Self::Zz, 18 => Self::Vv, 19 => Self::Bb,
+            20 => Self::Dd, 21 => Self::Gg, 22 => Self::Kk, 23 => Self::Sil,
+            24 => Self::Hh, 25 => Self::Tt, 26 => Self::Ay, 27 => Self::Ow,
+            28 => Self::Ey, 29 => Self::Pp, 30 => Self::Ww, 31 => Self::Yy,
+            32 => Self::Ng, 33 => Self::Ch, 34 => Self::Th, 35 => Self::Dh,
+            _ => Self::Sil,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ah => "AH", Self::Ee => "EE", Self::Ih => "IH", Self::Eh => "EH",
+            Self::Ae => "AE", Self::Uh => "UH", Self::Oh => "OH", Self::Oo => "OO",
+            Self::Aw => "AW", Self::Er => "ER", Self::Mm => "MM", Self::Nn => "NN",
+            Self::Ll => "LL", Self::Rr => "RR", Self::Ss => "SS", Self::Sh => "SH",
+            Self::Ff => "FF", Self::Zz => "ZZ", Self::Vv => "VV", Self::Bb => "BB",
+            Self::Dd => "DD", Self::Gg => "GG", Self::Kk => "KK", Self::Sil => " _ ",
+            Self::Hh => "HH", Self::Tt => "TT", Self::Ay => "AY",
+            Self::Ow => "OW", Self::Ey => "EY", Self::Pp => "PP",
+            Self::Ww => "WW", Self::Yy => "YY", Self::Ng => "NG",
+            Self::Ch => "CH", Self::Th => "TH", Self::Dh => "DH",
+        }
+    }
+
+    /// Full phoneme specification with per-formant amplitudes.
+    /// Format: (freq_hz, bandwidth_hz, amplitude) × 4.
+    fn spec(self) -> PhonemeSpec {
+        match self {
+            // Vowels — F1/F2 are the defining formants. F3/F4 add presence.
+            // Amplitudes: F1 loudest, F2 next, F3/F4 for air/brightness.
+            Self::Ah => PhonemeSpec { formants: [(730.0, 90.0, 1.0),  (1090.0, 110.0, 0.7),  (2440.0, 200.0, 0.2), (3400.0, 300.0, 0.07)], voiced: 1.0, gain: 1.0 },
+            Self::Ee => PhonemeSpec { formants: [(270.0, 60.0, 1.0),  (2290.0, 100.0, 0.5),  (3010.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 1.0 },
+            Self::Ih => PhonemeSpec { formants: [(390.0, 60.0, 1.0),  (1990.0, 100.0, 0.5),  (2550.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.9 },
+            Self::Eh => PhonemeSpec { formants: [(530.0, 70.0, 1.0),  (1840.0, 100.0, 0.6),  (2480.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
+            Self::Ae => PhonemeSpec { formants: [(660.0, 80.0, 1.0),  (1720.0, 100.0, 0.6),  (2410.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
+            Self::Uh => PhonemeSpec { formants: [(520.0, 70.0, 1.0),  (1190.0, 100.0, 0.6),  (2390.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.9 },
+            Self::Oh => PhonemeSpec { formants: [(570.0, 70.0, 1.0),  (840.0, 100.0, 0.7),   (2410.0, 200.0, 0.12),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
+            Self::Oo => PhonemeSpec { formants: [(300.0, 60.0, 1.0),  (870.0, 100.0, 0.5),   (2240.0, 200.0, 0.1), (3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.85 },
+            Self::Aw => PhonemeSpec { formants: [(590.0, 70.0, 1.0),  (880.0, 100.0, 0.7),   (2540.0, 200.0, 0.12),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
+            Self::Er => PhonemeSpec { formants: [(490.0, 70.0, 1.0),  (1350.0, 100.0, 0.5),  (1690.0, 200.0, 0.3), (3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.85 },
+            // Nasals — low F1, muffled
+            Self::Mm => PhonemeSpec { formants: [(200.0, 80.0, 1.0),  (1000.0, 200.0, 0.15), (2200.0, 300.0, 0.05),(3400.0, 400.0, 0.02)], voiced: 1.0, gain: 0.5 },
+            Self::Nn => PhonemeSpec { formants: [(200.0, 80.0, 1.0),  (1400.0, 200.0, 0.2),  (2200.0, 300.0, 0.05),(3400.0, 400.0, 0.02)], voiced: 1.0, gain: 0.5 },
+            // Liquids — gentle formants
+            Self::Ll => PhonemeSpec { formants: [(350.0, 80.0, 1.0),  (1000.0, 150.0, 0.4),  (2400.0, 200.0, 0.1), (3400.0, 300.0, 0.03)], voiced: 1.0, gain: 0.6 },
+            Self::Rr => PhonemeSpec { formants: [(350.0, 80.0, 1.0),  (1060.0, 150.0, 0.35), (1380.0, 200.0, 0.25),(3400.0, 300.0, 0.03)], voiced: 1.0, gain: 0.6 },
+            // Fricatives — noise-excited, high-frequency energy
+            Self::Ss => PhonemeSpec { formants: [(4000.0, 500.0, 0.6),(6000.0, 600.0, 0.8),  (8000.0, 800.0, 0.3), (10000.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.15 },
+            Self::Sh => PhonemeSpec { formants: [(2500.0, 400.0, 0.7),(4000.0, 500.0, 0.6),  (6000.0, 700.0, 0.3), (8000.0, 900.0, 0.1)],  voiced: 0.0, gain: 0.15 },
+            Self::Ff => PhonemeSpec { formants: [(1500.0, 600.0, 0.3),(3500.0, 700.0, 0.4),  (5500.0, 800.0, 0.3), (7500.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.12 },
+            // Voiced fricatives
+            Self::Zz => PhonemeSpec { formants: [(200.0, 80.0, 0.6),  (4000.0, 500.0, 0.3), (6000.0, 600.0, 0.4), (8000.0, 800.0, 0.15)], voiced: 0.5, gain: 0.15 },
+            Self::Vv => PhonemeSpec { formants: [(200.0, 80.0, 0.7),  (1500.0, 600.0, 0.2), (3500.0, 700.0, 0.3), (5500.0, 800.0, 0.15)], voiced: 0.5, gain: 0.12 },
+            // Stops — brief noise bursts at characteristic frequencies
+            Self::Bb => PhonemeSpec { formants: [(200.0, 100.0, 0.8), (800.0, 200.0, 0.3),  (1200.0, 300.0, 0.15),(2500.0, 400.0, 0.05)], voiced: 0.6, gain: 0.35 },
+            Self::Dd => PhonemeSpec { formants: [(200.0, 100.0, 0.6), (1600.0, 300.0, 0.5), (2600.0, 400.0, 0.3), (3500.0, 500.0, 0.1)],  voiced: 0.5, gain: 0.35 },
+            Self::Gg => PhonemeSpec { formants: [(200.0, 100.0, 0.5), (1500.0, 200.0, 0.6), (2500.0, 300.0, 0.4), (3500.0, 400.0, 0.1)],  voiced: 0.4, gain: 0.35 },
+            Self::Kk => PhonemeSpec { formants: [(800.0, 300.0, 0.3), (1500.0, 300.0, 0.5), (2500.0, 400.0, 0.5), (3500.0, 500.0, 0.15)], voiced: 0.0, gain: 0.25 },
+            // Aspirate — breathy noise shaped by wide-band formants
+            Self::Hh => PhonemeSpec { formants: [(500.0, 400.0, 0.3), (1500.0, 500.0, 0.3), (2500.0, 600.0, 0.25),(3500.0, 700.0, 0.15)], voiced: 0.0, gain: 0.12 },
+            // Unvoiced alveolar stop
+            Self::Tt => PhonemeSpec { formants: [(300.0, 200.0, 0.3), (3000.0, 400.0, 0.6), (4500.0, 500.0, 0.4), (6000.0, 600.0, 0.15)], voiced: 0.0, gain: 0.25 },
+            // Diphthongs — midpoint formants between component vowels
+            Self::Ay => PhonemeSpec { formants: [(560.0, 80.0, 1.0),  (1480.0, 110.0, 0.6),  (2500.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
+            Self::Ow => PhonemeSpec { formants: [(630.0, 80.0, 1.0),  (980.0, 110.0, 0.65),  (2400.0, 200.0, 0.12),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.9 },
+            Self::Ey => PhonemeSpec { formants: [(400.0, 70.0, 1.0),  (2060.0, 100.0, 0.55), (2750.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
+            // Unvoiced bilabial stop — low-freq burst
+            Self::Pp => PhonemeSpec { formants: [(400.0, 200.0, 0.4), (800.0, 300.0, 0.3),  (1200.0, 400.0, 0.15),(2500.0, 500.0, 0.05)], voiced: 0.0, gain: 0.25 },
+            // Semivowels — like vowels but quieter, meant as transitions
+            Self::Ww => PhonemeSpec { formants: [(300.0, 60.0, 0.8),  (600.0, 100.0, 0.4),   (2400.0, 200.0, 0.08),(3400.0, 300.0, 0.03)], voiced: 1.0, gain: 0.5 },
+            Self::Yy => PhonemeSpec { formants: [(260.0, 60.0, 0.8),  (2200.0, 100.0, 0.4),  (3000.0, 200.0, 0.12),(3400.0, 300.0, 0.04)], voiced: 1.0, gain: 0.5 },
+            // Velar nasal — like NN but further back
+            Self::Ng => PhonemeSpec { formants: [(200.0, 80.0, 1.0),  (1100.0, 200.0, 0.15), (2100.0, 300.0, 0.05),(3400.0, 400.0, 0.02)], voiced: 1.0, gain: 0.45 },
+            // Affricate — like TT+SH combined
+            Self::Ch => PhonemeSpec { formants: [(300.0, 200.0, 0.2), (2500.0, 400.0, 0.5),  (4000.0, 500.0, 0.5), (6000.0, 700.0, 0.2)],  voiced: 0.0, gain: 0.18 },
+            // Dental fricatives — broad gentle noise
+            Self::Th => PhonemeSpec { formants: [(1400.0, 600.0, 0.2),(3500.0, 700.0, 0.3),  (6000.0, 800.0, 0.25),(8000.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.10 },
+            Self::Dh => PhonemeSpec { formants: [(200.0, 80.0, 0.5),  (1400.0, 600.0, 0.15),(3500.0, 700.0, 0.2), (6000.0, 800.0, 0.1)],  voiced: 0.6, gain: 0.12 },
+            // Silence
+            Self::Sil => PhonemeSpec { formants: [(200.0, 100.0, 0.0),(1000.0, 200.0, 0.0), (2000.0, 300.0, 0.0), (3000.0, 400.0, 0.0)],  voiced: 1.0, gain: 0.0 },
+        }
+    }
+}
+
+/// Second-order resonator (bandpass) for formant synthesis.
+#[derive(Debug, Clone, Copy)]
+struct Resonator {
+    y1: f32,
+    y2: f32,
+    a1: f32,
+    a2: f32,
+    peak_gain: f32,
+}
+
+impl Default for Resonator {
+    fn default() -> Self {
+        Self { y1: 0.0, y2: 0.0, a1: 0.0, a2: 0.0, peak_gain: 1.0 }
+    }
+}
+
+impl Resonator {
+    /// Recompute coefficients for given formant frequency and bandwidth.
+    fn set_freq_bw(&mut self, freq: f32, bw: f32, sample_rate: f32) {
+        let omega = TAU * freq / sample_rate;
+        let r = (-std::f32::consts::PI * bw / sample_rate).exp();
+        self.a1 = 2.0 * r * omega.cos();
+        self.a2 = -(r * r);
+        // Normalize peak gain so the resonator has unity gain at its center
+        // frequency. Without this, narrow-bandwidth resonators produce
+        // huge peaks that dominate the mix.
+        self.peak_gain = (1.0 - r * r).max(0.001);
+    }
+
+    #[inline]
+    fn tick(&mut self, input: f32) -> f32 {
+        let y = input * self.peak_gain + self.a1 * self.y1 + self.a2 * self.y2;
+        self.y2 = self.y1;
+        self.y1 = y;
+        // Prevent blowup.
+        if y.abs() > 10.0 {
+            self.y1 *= 0.3;
+            self.y2 *= 0.3;
+        }
+        y
+    }
+
+    fn reset(&mut self) {
+        self.y1 = 0.0;
+        self.y2 = 0.0;
+    }
+}
+
+/// Parallel formant speech synthesizer.
+///
+/// Excitation is fed into 4 resonators **in parallel**, each with its own
+/// amplitude. The outputs are summed. This gives direct control over the
+/// spectral envelope — F1 and F2 define the vowel, F3/F4 add air.
+#[derive(Debug, Clone)]
+pub struct LpcSynth {
+    formants: [Resonator; NUM_FORMANTS],
+    // Interpolated formant state: (freq, bw, amp).
+    cur: [(f32, f32, f32); NUM_FORMANTS],
+    tgt: [(f32, f32, f32); NUM_FORMANTS],
+    cur_gain: f32,
+    tgt_gain: f32,
+    cur_voiced: f32,
+    tgt_voiced: f32,
+    interp_t: f32,
+    // Excitation.
+    pitch_phase: f32,
+    glottal_state: f32, // single-pole filter state for glottal shaping
+    lfsr: u32,
+    sample_rate: f32,
+    current_phoneme: usize,
+}
+
+impl Default for LpcSynth {
+    fn default() -> Self {
+        let sp = Phoneme::Ah.spec();
+        let fb: [(f32, f32, f32); NUM_FORMANTS] = sp.formants;
+        Self {
+            formants: [Resonator::default(); NUM_FORMANTS],
+            cur: fb,
+            tgt: fb,
+            cur_gain: sp.gain,
+            tgt_gain: sp.gain,
+            cur_voiced: sp.voiced,
+            tgt_voiced: sp.voiced,
+            interp_t: 1.0,
+            pitch_phase: 0.0,
+            glottal_state: 0.0,
+            lfsr: 0xACE1,
+            sample_rate: 44100.0,
+            current_phoneme: 0,
+        }
+    }
+}
+
+impl LpcSynth {
+    pub fn reset(&mut self) {
+        for f in &mut self.formants {
+            f.reset();
+        }
+        self.pitch_phase = 0.0;
+        self.glottal_state = 0.0;
+        self.lfsr = 0xACE1;
+        self.interp_t = 1.0;
+    }
+
+    pub fn set_sample_rate(&mut self, sr: f32) {
+        self.sample_rate = sr;
+    }
+
+    /// Set the target phoneme. Smoothly interpolates from the current state.
+    pub fn set_phoneme(&mut self, idx: usize) {
+        let idx = idx.min(NUM_PHONEMES - 1);
+        if idx != self.current_phoneme || self.interp_t >= 1.0 {
+            // Snapshot current interpolated values.
+            let t = self.interp_t.clamp(0.0, 1.0);
+            for i in 0..NUM_FORMANTS {
+                self.cur[i].0 += t * (self.tgt[i].0 - self.cur[i].0);
+                self.cur[i].1 += t * (self.tgt[i].1 - self.cur[i].1);
+                self.cur[i].2 += t * (self.tgt[i].2 - self.cur[i].2);
+            }
+            self.cur_gain += t * (self.tgt_gain - self.cur_gain);
+            self.cur_voiced += t * (self.tgt_voiced - self.cur_voiced);
+
+            let sp = Phoneme::from_index(idx).spec();
+            self.tgt = sp.formants;
+            self.tgt_gain = sp.gain;
+            self.tgt_voiced = sp.voiced;
+            self.interp_t = 0.0;
+            self.current_phoneme = idx;
+        }
+    }
+
+    /// Render one sample.
+    /// `pitch_hz` — fundamental frequency from MIDI.
+    /// `buzz` — 0.0 = use phoneme voicing, 1.0 = force noise.
+    #[inline]
+    pub fn tick(&mut self, pitch_hz: f32, buzz: f32) -> f32 {
+        // Advance interpolation (~30ms).
+        let interp_rate = 1.0 / (0.03 * self.sample_rate);
+        self.interp_t = (self.interp_t + interp_rate).min(1.0);
+        let t = self.interp_t;
+
+        // Update resonator coefficients.
+        let mut amps = [0.0_f32; NUM_FORMANTS];
+        for i in 0..NUM_FORMANTS {
+            let freq = (self.cur[i].0 + t * (self.tgt[i].0 - self.cur[i].0))
+                .min(self.sample_rate * 0.45);
+            let bw = self.cur[i].1 + t * (self.tgt[i].1 - self.cur[i].1);
+            amps[i] = self.cur[i].2 + t * (self.tgt[i].2 - self.cur[i].2);
+            self.formants[i].set_freq_bw(freq, bw, self.sample_rate);
+        }
+
+        let gain = self.cur_gain + t * (self.tgt_gain - self.cur_gain);
+        let phoneme_voiced = self.cur_voiced + t * (self.tgt_voiced - self.cur_voiced);
+        let voiced_mix = phoneme_voiced * (1.0 - buzz);
+
+        // --- Glottal excitation ---
+        // Rosenberg-style glottal pulse: quick rise, slower fall.
+        let pitch_inc = (pitch_hz / self.sample_rate).clamp(0.0001, 0.5);
+        self.pitch_phase += pitch_inc;
+        if self.pitch_phase >= 1.0 {
+            self.pitch_phase -= 1.0;
+        }
+        // Open phase = 60% of the period, closed phase = 40%.
+        let glottal_raw = if self.pitch_phase < 0.1 {
+            // Rising edge.
+            self.pitch_phase / 0.1
+        } else if self.pitch_phase < 0.6 {
+            // Falling edge.
+            1.0 - (self.pitch_phase - 0.1) / 0.5
+        } else {
+            0.0
+        };
+        // Differentiate to get the glottal flow derivative (what the vocal
+        // tract actually "sees"). Use a simple first-difference.
+        let glottal_excitation = glottal_raw - self.glottal_state;
+        self.glottal_state = glottal_raw;
+
+        // Unvoiced: white noise.
+        let bit = ((self.lfsr ^ (self.lfsr >> 1)) & 1) as u32;
+        self.lfsr = (self.lfsr >> 1) | (bit << 14);
+        let noise = if (self.lfsr & 1) == 0 { 1.0 } else { -1.0 };
+
+        let excitation = voiced_mix * glottal_excitation * 4.0
+            + (1.0 - voiced_mix) * noise * 0.12;
+
+        // --- Parallel formant filtering ---
+        // Each resonator gets the same excitation; outputs are amplitude-
+        // weighted and summed. This preserves F1/F2 distinction.
+        let mut signal = 0.0_f32;
+        for i in 0..NUM_FORMANTS {
+            signal += amps[i] * self.formants[i].tick(excitation);
+        }
+
+        (signal * gain).clamp(-2.0, 2.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

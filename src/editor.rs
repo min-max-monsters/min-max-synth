@@ -6,6 +6,7 @@ use crate::preset_bank::{
     Category, ParamSnapshot, PresetBank, PresetMeta, System, Voicing,
 };
 use crate::samples::DrumKind;
+use crate::dsp::{Phoneme, NUM_PHONEMES};
 use crate::widgets::{apply_style, led_toggle, palette, panel, Knob, VSlider};
 use crate::GuiNoteEvent;
 use crossbeam_queue::ArrayQueue;
@@ -187,7 +188,50 @@ fn draw_header(
 
             ui.label(RichText::new("PRESET").color(palette::TEXT_DIM).size(11.0));
             ui.add_space(12.0);
-            led_toggle(ui, &params.drum_mode, setter, "DRUM MODE");
+            // Mode selector: SYNTH / DRUM / SPEECH
+            {
+                let is_drum = params.drum_mode.value();
+                let is_speech = params.speech_mode.value();
+                let mode = if is_speech { 2 } else if is_drum { 1 } else { 0 };
+                let labels = ["SYNTH", "DRUM", "SPEECH"];
+                for (i, label) in labels.iter().enumerate() {
+                    let sel = i == mode;
+                    let color = if sel { palette::ACCENT } else { palette::TEXT_DIM };
+                    let btn = egui::Button::new(
+                        RichText::new(*label).color(color).size(11.0).strong(),
+                    )
+                    .fill(if sel { palette::BG_MID } else { Color32::TRANSPARENT })
+                    .stroke(Stroke::new(if sel { 1.0 } else { 0.5 }, if sel { palette::ACCENT } else { palette::BORDER }));
+                    if ui.add(btn).clicked() {
+                        match i {
+                            0 => {
+                                setter.begin_set_parameter(&params.drum_mode);
+                                setter.set_parameter(&params.drum_mode, false);
+                                setter.end_set_parameter(&params.drum_mode);
+                                setter.begin_set_parameter(&params.speech_mode);
+                                setter.set_parameter(&params.speech_mode, false);
+                                setter.end_set_parameter(&params.speech_mode);
+                            }
+                            1 => {
+                                setter.begin_set_parameter(&params.drum_mode);
+                                setter.set_parameter(&params.drum_mode, true);
+                                setter.end_set_parameter(&params.drum_mode);
+                                setter.begin_set_parameter(&params.speech_mode);
+                                setter.set_parameter(&params.speech_mode, false);
+                                setter.end_set_parameter(&params.speech_mode);
+                            }
+                            _ => {
+                                setter.begin_set_parameter(&params.drum_mode);
+                                setter.set_parameter(&params.drum_mode, false);
+                                setter.end_set_parameter(&params.drum_mode);
+                                setter.begin_set_parameter(&params.speech_mode);
+                                setter.set_parameter(&params.speech_mode, true);
+                                setter.end_set_parameter(&params.speech_mode);
+                            }
+                        }
+                    }
+                }
+            }
         });
     });
     ui.add_space(2.0);
@@ -199,7 +243,9 @@ fn draw_header(
 }
 
 fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mut EditorState) {
-    if params.drum_mode.value() {
+    if params.speech_mode.value() {
+        draw_speech_main(ui, params, setter);
+    } else if params.drum_mode.value() {
         draw_drum_main(ui, params, setter, state);
     } else {
         draw_synth_main(ui, params, setter);
@@ -295,6 +341,206 @@ fn draw_synth_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                     ui.add(Knob::new(&params.hp_cutoff, setter).with_label("HP CUT"));
                 });
                 draw_filter_system_buttons(ui, params, setter);
+            });
+        });
+    });
+}
+
+fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    ui.horizontal_top(|ui| {
+        // Left column: phoneme selector + sequencer + voice controls.
+        ui.vertical(|ui| {
+            panel(ui, "PHONEME", palette::RED, |ui| {
+                let current = params.phoneme.value() as usize;
+                // Helper closure to draw a row of phoneme buttons.
+                let phon_row = |ui: &mut Ui, label: &str, range: std::ops::Range<usize>| {
+                    ui.label(RichText::new(label).color(palette::TEXT_DIM).size(10.0));
+                    ui.horizontal_wrapped(|ui| {
+                        for i in range {
+                            let p = Phoneme::from_index(i);
+                            let sel = i == current;
+                            let color = if sel { palette::ACCENT } else { palette::TEXT };
+                            let btn = egui::Button::new(
+                                RichText::new(p.label()).color(color).size(12.0).strong(),
+                            )
+                            .min_size(egui::vec2(34.0, 22.0))
+                            .fill(if sel { palette::BG_MID } else { Color32::TRANSPARENT })
+                            .stroke(Stroke::new(
+                                if sel { 1.0 } else { 0.5 },
+                                if sel { palette::ACCENT } else { palette::BORDER },
+                            ));
+                            if ui.add(btn).clicked() {
+                                setter.begin_set_parameter(&params.phoneme);
+                                setter.set_parameter(&params.phoneme, i as i32);
+                                setter.end_set_parameter(&params.phoneme);
+                            }
+                        }
+                    });
+                    ui.add_space(2.0);
+                };
+                phon_row(ui, "Vowels", 0..10);
+                phon_row(ui, "Nasals / Liquids", 10..14);
+                phon_row(ui, "Fricatives / Dental", 14..19);
+                phon_row(ui, "Stops / HH / TT", 19..26);
+                phon_row(ui, "Diphthongs / Semivowels", 26..32);
+                phon_row(ui, "NG / CH / TH / DH / Silence", 32..36);
+            });
+            ui.add_space(6.0);
+            // --- Sequencer ---
+            panel(ui, "WORD SEQUENCER", palette::RED, |ui| {
+                let seq_len = params.speech_seq_len.value() as usize;
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.speech_seq_len, setter).with_label("STEPS"));
+                    ui.add(Knob::new(&params.speech_step_ms, setter).with_label("SPEED"));
+                    led_toggle(ui, &params.speech_seq_loop, setter, "LOOP");
+                });
+                if seq_len > 0 {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        for i in 0..seq_len {
+                            let phon_idx = params.sq(i).value() as usize;
+                            let p = Phoneme::from_index(phon_idx);
+                            let btn = egui::Button::new(
+                                RichText::new(p.label()).color(palette::ACCENT).size(14.0).strong(),
+                            )
+                            .min_size(egui::vec2(40.0, 28.0))
+                            .fill(palette::BG_MID)
+                            .stroke(Stroke::new(1.0, palette::ACCENT));
+                            if ui.add(btn).on_hover_text("Click to cycle phoneme").clicked() {
+                                let next = (phon_idx + 1) % NUM_PHONEMES;
+                                setter.begin_set_parameter(params.sq(i));
+                                setter.set_parameter(params.sq(i), next as i32);
+                                setter.end_set_parameter(params.sq(i));
+                            }
+                        }
+                    });
+                    if seq_len < 8 {
+                        ui.horizontal(|ui| {
+                            for i in seq_len..8 {
+                                let phon_idx = params.sq(i).value() as usize;
+                                let p = Phoneme::from_index(phon_idx);
+                                let btn = egui::Button::new(
+                                    RichText::new(p.label()).color(palette::TEXT_DIM).size(11.0),
+                                )
+                                .min_size(egui::vec2(36.0, 20.0))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::new(0.5, palette::BORDER));
+                                if ui.add(btn).clicked() {
+                                    setter.begin_set_parameter(&params.speech_seq_len);
+                                    setter.set_parameter(&params.speech_seq_len, (i + 1) as i32);
+                                    setter.end_set_parameter(&params.speech_seq_len);
+                                }
+                            }
+                        });
+                    }
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new("Presets").color(palette::TEXT_DIM).size(10.0));
+                ui.horizontal_wrapped(|ui| {
+                    // Word presets using the new phoneme set (with stops + silence).
+                    // Sil=23, Bb=19, Dd=20, Gg=21, Kk=22
+                    let words: &[(&str, &[usize])] = &[
+                        ("MIN",      &[10, 2, 11]),              // MM-IH-NN
+                        ("MAX",      &[10, 4, 22, 14]),          // MM-AE-KK-SS
+                        ("MONSTERS", &[10, 0, 11, 14, 25, 9, 17]),// MM-AH-NN-SS-TT-ER-ZZ
+                        ("HELLO",    &[24, 3, 12, 6]),           // HH-EH-LL-OH
+                        ("WORLD",    &[30, 9, 12, 20]),          // WW-ER-LL-DD
+                        ("YEAH",     &[31, 4]),                  // YY-AE
+                        ("COOL",     &[22, 7, 12]),              // KK-OO-LL
+                        ("ROBOT",    &[13, 6, 19, 0, 25]),       // RR-OH-BB-AH-TT
+                        ("FIRE",     &[16, 26, 9]),              // FF-AY-ER
+                        ("NO",       &[11, 6]),                  // NN-OH
+                        ("YES",      &[31, 3, 14]),              // YY-EH-SS
+                        ("OK",       &[6, 22, 28]),              // OH-KK-EY
+                        ("TALK",     &[25, 8, 12, 22]),          // TT-AW-LL-KK
+                        ("BEEP",     &[19, 1, 1, 29]),           // BB-EE-EE-PP
+                        ("SPELL",    &[14, 29, 3, 12]),          // SS-PP-EH-LL
+                    ];
+                    for (label, phonemes) in words {
+                        let btn = egui::Button::new(
+                            RichText::new(*label).color(palette::TEXT).size(10.0),
+                        )
+                        .min_size(egui::vec2(44.0, 20.0))
+                        .fill(palette::BG_DEEP);
+                        if ui.add(btn).clicked() {
+                            let len = phonemes.len().min(8);
+                            setter.begin_set_parameter(&params.speech_seq_len);
+                            setter.set_parameter(&params.speech_seq_len, len as i32);
+                            setter.end_set_parameter(&params.speech_seq_len);
+                            for (i, &ph) in phonemes.iter().take(8).enumerate() {
+                                setter.begin_set_parameter(params.sq(i));
+                                setter.set_parameter(params.sq(i), ph as i32);
+                                setter.end_set_parameter(params.sq(i));
+                            }
+                        }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "VOICE", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.speech_buzz, setter).with_label("BUZZ"));
+                    ui.add(Knob::new(&params.gain, setter).with_label("GAIN").with_diameter(54.0));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "AMP", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.octave, setter).with_label("OCT"));
+                    ui.add(Knob::new(&params.fine_tune, setter).with_label("FINE"));
+                });
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Middle column: envelope.
+        ui.vertical(|ui| {
+            panel(ui, "ENVELOPE", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.attack, setter).with_label("A"));
+                    ui.add(Knob::new(&params.decay, setter).with_label("D"));
+                    ui.add(Knob::new(&params.sustain, setter).with_label("S"));
+                    ui.add(Knob::new(&params.release, setter).with_label("R"));
+                });
+                ui.add_space(2.0);
+                draw_adsr_visual(ui, params);
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Right column: modulation + effects.
+        ui.vertical(|ui| {
+            panel(ui, "VIBRATO", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.vibrato_rate, setter).with_label("RATE"));
+                    ui.add(Knob::new(&params.vibrato_depth, setter).with_label("DEPTH"));
+                    ui.add(Knob::new(&params.vibrato_delay, setter).with_label("DELAY"));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "MONO / ARP", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    led_toggle(ui, &params.mono, setter, "Monophonic");
+                    ui.add(Knob::new(&params.arp_rate, setter).with_label("ARP RATE"));
+                    ui.add(Knob::new(&params.glide_time, setter).with_label("GLIDE"));
+                });
+                draw_legato_buttons(ui, params, setter);
+            });
+            ui.add_space(6.0);
+            panel(ui, "BITCRUSH", palette::ACCENT, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.bit_depth, setter).with_label("BITS"));
+                    ui.add(Knob::new(&params.bit_rate, setter).with_label("RATE"));
+                });
+            });
+            ui.add_space(6.0);
+            panel(ui, "OUTPUT FILTER", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.lp_cutoff, setter).with_label("LP CUT"));
+                    ui.add(Knob::new(&params.hp_cutoff, setter).with_label("HP CUT"));
+                });
             });
         });
     });

@@ -2,8 +2,8 @@
 //! optional sample playback. Created once and recycled by the voice pool.
 
 use crate::dsp::{
-    midi_to_hz, Adsr, DrumParams, DrumVoice, FmOsc, Lfo, NoiseOsc, PulseOsc, SawOsc, Sweep,
-    TriangleOsc, Waveform, WaveOsc,
+    midi_to_hz, Adsr, DrumParams, DrumVoice, FmOsc, Lfo, LpcSynth, NoiseOsc, PulseOsc, SawOsc,
+    Sweep, TriangleOsc, Waveform, WaveOsc,
 };
 use crate::params::LegatoMode;
 
@@ -40,6 +40,13 @@ pub struct VoiceParams {
     pub octave_shift: i32,
     pub drum_mode: bool,
     pub drum_pitch: bool,
+    pub speech_mode: bool,
+    pub phoneme: usize,
+    pub speech_buzz: f32,
+    pub speech_seq: [usize; 8],
+    pub speech_seq_len: usize,
+    pub speech_step_ms: f32,
+    pub speech_seq_loop: bool,
     pub drum_wave: [i32; 8],
     pub drum_freq: [f32; 8],
     pub drum_ratio: [f32; 8],
@@ -85,6 +92,10 @@ pub struct Voice {
     drum_pitch_mult: f32,
     is_drum: bool,
     drum_idx: usize,
+
+    // LPC speech mode
+    lpc: LpcSynth,
+    is_speech: bool,
 }
 
 impl Voice {
@@ -111,12 +122,15 @@ impl Voice {
             drum_pitch_mult: 1.0,
             is_drum: false,
             drum_idx: 0,
+            lpc: LpcSynth::default(),
+            is_speech: false,
         }
     }
 
     pub fn set_sample_rate(&mut self, sr: f32) {
         self.sample_rate = sr;
         self.env.set_sample_rate(sr);
+        self.lpc.set_sample_rate(sr);
     }
 
     pub fn is_active(&self) -> bool {
@@ -154,6 +168,7 @@ impl Voice {
 
         if params.drum_mode {
             self.is_drum = true;
+            self.is_speech = false;
             // Map note to one of 8 drum slots: lowest 8 keys above C2 (36).
             let idx = ((note as i32 - 36).rem_euclid(8)) as usize;
             self.drum_idx = idx;
@@ -171,8 +186,19 @@ impl Voice {
             self.env.sustain = 1.0;
             self.env.release = 0.001;
             self.env.note_on();
+        } else if params.speech_mode {
+            self.is_drum = false;
+            self.is_speech = true;
+            self.lpc.reset();
+            self.lpc.set_phoneme(params.phoneme);
+            self.env.attack = params.attack;
+            self.env.decay = params.decay;
+            self.env.sustain = params.sustain;
+            self.env.release = params.release;
+            self.env.note_on();
         } else {
             self.is_drum = false;
+            self.is_speech = false;
             self.env.attack = params.attack;
             self.env.decay = params.decay;
             self.env.sustain = params.sustain;
@@ -216,6 +242,24 @@ impl Voice {
         self.note.is_some() && !self.is_drum && self.env.is_active()
     }
 
+    /// Called when a non-looping sequence has finished all its steps.
+    /// Fades to silence quickly (~30ms) and then deactivates the voice.
+    #[inline]
+    fn play_once_fadeout(&mut self, params: &VoiceParams) -> f32 {
+        // Use silence phoneme.
+        self.lpc.set_phoneme(23); // Sil
+        let env = self.env.tick();
+        if !self.env.is_active() {
+            self.note = None;
+            return 0.0;
+        }
+        self.elapsed_samples = self.elapsed_samples.saturating_add(1);
+        let pitch_hz = midi_to_hz(self.current_pitch + params.octave_shift as f32 * 12.0
+            + params.fine_tune_cents / 100.0);
+        let raw = self.lpc.tick(pitch_hz, params.speech_buzz);
+        raw * env * self.velocity
+    }
+
     /// Render one sample. The bitcrusher is applied to the bus, not per-voice,
     /// so this returns a clean per-voice signal.
     #[inline]
@@ -240,6 +284,55 @@ impl Voice {
                 self.note = None;
             }
             return v;
+        }
+
+        // --- Speech (LPC) mode ---
+        if self.is_speech {
+            // Determine which phoneme to play: single or sequenced.
+            let phoneme_idx = if params.speech_seq_len > 0 {
+                let step_samples = (params.speech_step_ms / 1000.0 * self.sample_rate).max(1.0);
+                let total_steps = params.speech_seq_len;
+                let total_samples = step_samples * total_steps as f32;
+                let pos = self.elapsed_samples as f32;
+                let step = if params.speech_seq_loop {
+                    ((pos % total_samples) / step_samples) as usize
+                } else if pos >= total_samples {
+                    // Past the end: silence (play-once behaviour).
+                    return self.play_once_fadeout(params);
+                } else {
+                    (pos / step_samples) as usize
+                };
+                params.speech_seq[step.min(total_steps - 1)]
+            } else {
+                params.phoneme
+            };
+            self.lpc.set_phoneme(phoneme_idx);
+
+            let env = self.env.tick();
+            if !self.env.is_active() {
+                self.note = None;
+                return 0.0;
+            }
+
+            // Pitch: base note + octave + fine tune (vibrato/sweep also apply).
+            let elapsed_s = self.elapsed_samples as f32 / self.sample_rate;
+            self.elapsed_samples = self.elapsed_samples.saturating_add(1);
+            let vib_gain = if params.vibrato_depth_semi <= 0.0 {
+                0.0
+            } else {
+                ((elapsed_s - params.vibrato_delay) / 0.08).clamp(0.0, 1.0)
+            };
+            let vib = self.vibrato.tick(params.vibrato_rate, self.sample_rate)
+                * params.vibrato_depth_semi
+                * vib_gain;
+            let n = self.current_pitch
+                + params.octave_shift as f32 * 12.0
+                + params.fine_tune_cents / 100.0
+                + vib;
+            let freq = midi_to_hz(n);
+
+            let raw = self.lpc.tick(freq, params.speech_buzz);
+            return raw * env * self.velocity;
         }
 
         let env = self.env.tick();

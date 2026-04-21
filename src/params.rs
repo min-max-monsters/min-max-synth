@@ -136,6 +136,29 @@ pub struct SynthParams {
     #[id = "drum_p"]
     pub drum_pitch: BoolParam,
 
+    #[id = "speech"]
+    pub speech_mode: BoolParam,
+    #[id = "phon"]
+    pub phoneme: IntParam,
+    #[id = "buzz"]
+    pub speech_buzz: FloatParam,
+
+    // Speech sequencer: 8 phoneme slots + timing.
+    #[id = "sq_len"]
+    pub speech_seq_len: IntParam,
+    #[id = "sq_ms"]
+    pub speech_step_ms: FloatParam,
+    #[id = "sq_lp"]
+    pub speech_seq_loop: BoolParam,
+    #[id = "sq0"] pub sq0: IntParam,
+    #[id = "sq1"] pub sq1: IntParam,
+    #[id = "sq2"] pub sq2: IntParam,
+    #[id = "sq3"] pub sq3: IntParam,
+    #[id = "sq4"] pub sq4: IntParam,
+    #[id = "sq5"] pub sq5: IntParam,
+    #[id = "sq6"] pub sq6: IntParam,
+    #[id = "sq7"] pub sq7: IntParam,
+
     // Per-drum: 9 params each (wave/freq/ratio/noise/pitch_env/pitch_time/decay/burst/level).
     #[id="d0w"] pub d0_wave: IntParam,
     #[id="d0f"] pub d0_freq: FloatParam,
@@ -324,6 +347,29 @@ impl Default for SynthParams {
 
             drum_mode: BoolParam::new("Drum Mode", false),
             drum_pitch: BoolParam::new("Drum Pitch Tracks Note", true),
+
+            speech_mode: BoolParam::new("Speech Mode", false),
+            phoneme: IntParam::new("Phoneme", 0, IntRange::Linear { min: 0, max: 35 }),
+            speech_buzz: FloatParam::new("Buzz", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01),
+
+            speech_seq_len: IntParam::new("Seq Length", 0, IntRange::Linear { min: 0, max: 8 }),
+            speech_step_ms: FloatParam::new(
+                "Step Time",
+                120.0,
+                FloatRange::Skewed { min: 30.0, max: 500.0, factor: FloatRange::skew_factor(-1.0) },
+            )
+            .with_unit(" ms")
+            .with_step_size(1.0),
+            speech_seq_loop: BoolParam::new("Seq Loop", false),
+            sq0: IntParam::new("Seq 1", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq1: IntParam::new("Seq 2", 1, IntRange::Linear { min: 0, max: 35 }),
+            sq2: IntParam::new("Seq 3", 6, IntRange::Linear { min: 0, max: 35 }),
+            sq3: IntParam::new("Seq 4", 7, IntRange::Linear { min: 0, max: 35 }),
+            sq4: IntParam::new("Seq 5", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq5: IntParam::new("Seq 6", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq6: IntParam::new("Seq 7", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq7: IntParam::new("Seq 8", 0, IntRange::Linear { min: 0, max: 35 }),
 
             // Defaults are tuned to recreate the original 8 embedded samples.
             // (See src/samples.rs for the originals; numbers below are derived
@@ -541,6 +587,18 @@ impl SynthParams {
             octave_shift: self.octave.value(),
             drum_mode: self.drum_mode.value(),
             drum_pitch: self.drum_pitch.value(),
+            speech_mode: self.speech_mode.value(),
+            phoneme: self.phoneme.value() as usize,
+            speech_buzz: self.speech_buzz.value(),
+            speech_seq: [
+                self.sq0.value() as usize, self.sq1.value() as usize,
+                self.sq2.value() as usize, self.sq3.value() as usize,
+                self.sq4.value() as usize, self.sq5.value() as usize,
+                self.sq6.value() as usize, self.sq7.value() as usize,
+            ],
+            speech_seq_len: self.speech_seq_len.value() as usize,
+            speech_step_ms: self.speech_step_ms.value(),
+            speech_seq_loop: self.speech_seq_loop.value(),
             drum_wave: [
                 self.d0_wave.value(), self.d1_wave.value(),
                 self.d2_wave.value(), self.d3_wave.value(),
@@ -633,5 +691,9 @@ impl SynthParams {
     pub fn d_level(&self, i: usize) -> &FloatParam {
         match i { 0 => &self.d0_level, 1 => &self.d1_level, 2 => &self.d2_level, 3 => &self.d3_level,
                   4 => &self.d4_level, 5 => &self.d5_level, 6 => &self.d6_level, _ => &self.d7_level }
+    }
+    pub fn sq(&self, i: usize) -> &IntParam {
+        match i { 0 => &self.sq0, 1 => &self.sq1, 2 => &self.sq2, 3 => &self.sq3,
+                  4 => &self.sq4, 5 => &self.sq5, 6 => &self.sq6, _ => &self.sq7 }
     }
 }
