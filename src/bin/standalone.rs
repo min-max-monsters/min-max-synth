@@ -2,7 +2,7 @@
 //! audio backend so you can play it with the QWERTY keyboard without a host.
 //!
 //! When no explicit `--sample-rate` or `--backend` is given, this binary
-//! queries the default CoreAudio output device for its supported configs and
+//! queries the default output device for its supported configs and
 //! tries combinations of audio layout × sample rate × period size before
 //! falling back to the silent dummy backend.
 
@@ -57,10 +57,18 @@ fn main() {
         return;
     }
 
+    let native_backend = if cfg!(target_os = "macos") {
+        "core-audio"
+    } else if cfg!(target_os = "windows") {
+        "wasapi"
+    } else {
+        "auto"
+    };
+
     for (layout, sr, period) in &combos {
-        let args = build_args("core-audio", *layout, *sr, *period, &extra_args);
+        let args = build_args(native_backend, *layout, *sr, *period, &extra_args);
         eprintln!(
-            "[standalone] Trying CoreAudio layout {} at {} Hz / {} samples …",
+            "[standalone] Trying {native_backend} layout {} at {} Hz / {} samples …",
             layout, sr, period
         );
         if nih_export_standalone_with_args::<MinMaxSynth, _>(args.into_iter()) {
@@ -69,7 +77,7 @@ fn main() {
     }
 
     // None of the detected configs worked — fall back to `auto`.
-    eprintln!("[standalone] All CoreAudio configs failed, falling back to auto …");
+    eprintln!("[standalone] All {native_backend} configs failed, falling back to auto …");
     nih_export_standalone::<MinMaxSynth>();
 }
 
@@ -79,7 +87,7 @@ const LAYOUT_CHANNELS: &[u16] = &[2, 1, 4];
 /// Preferred layout order: stereo first, then quad, then mono.
 const LAYOUT_PRIORITY: &[usize] = &[0, 2, 1];
 
-/// Query the default CoreAudio output device and return a prioritised list of
+/// Query the default output device and return a prioritised list of
 /// (audio_layout_index, sample_rate, period_size) triples.
 fn query_device_combos() -> Vec<(usize, u32, u32)> {
     let host = cpal::default_host();
