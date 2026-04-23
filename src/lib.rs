@@ -159,7 +159,7 @@ impl Plugin for MinMaxSynth {
     const VENDOR: &'static str = "Persy";
     const URL: &'static str = "https://example.com";
     const EMAIL: &'static str = "noreply@example.com";
-    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+    const VERSION: &'static str = env!("MIN_MAX_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         // Layout 0 — stereo (preferred for most devices / DAW hosts).

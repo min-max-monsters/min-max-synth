@@ -33,6 +33,21 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
+            - name: Compute version string
+              id: version
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  base_ver=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+                  if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+                    ver="${GITHUB_REF#refs/tags/v}"
+                  else
+                    short_sha=$(git rev-parse --short HEAD)
+                    ver="${base_ver}-nightly.${short_sha}"
+                  fi
+                  echo "version=${ver}" >> "$GITHUB_OUTPUT"
+                  echo "Resolved version: ${ver}"
+
             - name: Install Rust toolchain
               uses: dtolnay/rust-toolchain@stable
               with:
@@ -65,10 +80,14 @@ jobs:
 
             - name: Bundle plugins (CLAP + VST3)
               run: cargo nih-plug bundle min_max_synth --release --target ${{ matrix.target }}
+              env:
+                  MIN_MAX_VERSION: ${{ steps.version.outputs.version }}
 
             - name: Build standalone binary
               run: cargo build --release --bin min_max_standalone --target ${{ matrix.target
                   }}
+              env:
+                  MIN_MAX_VERSION: ${{ steps.version.outputs.version }}
 
             - name: Stage artifacts
               shell: bash
@@ -87,7 +106,8 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
-                  archive="min_max_synth-${{ matrix.name }}"
+                  ver="${{ steps.version.outputs.version }}"
+                  archive="min_max_synth-${ver}-${{ matrix.name }}"
                   if [ "${{ runner.os }}" = "Windows" ]; then
                     7z a "${archive}.zip" ./staging/*
                     echo "ARCHIVE=${archive}.zip" >> "$GITHUB_ENV"

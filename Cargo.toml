@@ -2,7 +2,7 @@
 name = "min_max_synth"
 version = "0.1.0"
 edition = "2021"
-authors = ["Persy"]
+authors = ["Felix"]
 license = "MIT"
 description = "Retro chiptune synthesizer (NES/Gameboy/Genesis) with embedded sample percussion"
 
