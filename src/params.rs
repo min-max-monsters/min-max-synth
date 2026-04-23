@@ -59,6 +59,31 @@ pub enum LegatoMode {
     Glide,
 }
 
+/// Target parameter for the mod envelope.
+#[derive(Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModTargetChoice {
+    #[id = "pitch"]
+    #[name = "Pitch"]
+    Pitch,
+    #[id = "duty"]
+    #[name = "Duty"]
+    Duty,
+    #[id = "fm_idx"]
+    #[name = "FM Index"]
+    FmIndex,
+}
+
+/// Ramp shape for the mod envelope.
+#[derive(Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModShapeChoice {
+    #[id = "step"]
+    #[name = "Step"]
+    Step,
+    #[id = "linear"]
+    #[name = "Linear"]
+    Linear,
+}
+
 #[derive(Params)]
 pub struct SynthParams {
     /// Persisted GUI window size.
@@ -108,6 +133,18 @@ pub struct SynthParams {
     #[id = "swp_tm"]
     pub sweep_time: FloatParam,
 
+    // Mod envelope — delayed one-shot step/ramp modulator.
+    #[id = "me_tgt"]
+    pub mod_target: EnumParam<ModTargetChoice>,
+    #[id = "me_amt"]
+    pub mod_amount: FloatParam,
+    #[id = "me_dly"]
+    pub mod_delay: FloatParam,
+    #[id = "me_shp"]
+    pub mod_shape: EnumParam<ModShapeChoice>,
+    #[id = "me_tm"]
+    pub mod_time: FloatParam,
+
     #[id = "mono"]
     pub mono: BoolParam,
     #[id = "arp_rt"]
@@ -143,7 +180,7 @@ pub struct SynthParams {
     #[id = "buzz"]
     pub speech_buzz: FloatParam,
 
-    // Speech sequencer: 8 phoneme slots + timing.
+    // Speech sequencer: 16 phoneme slots + timing.
     #[id = "sq_len"]
     pub speech_seq_len: IntParam,
     #[id = "sq_ms"]
@@ -158,6 +195,14 @@ pub struct SynthParams {
     #[id = "sq5"] pub sq5: IntParam,
     #[id = "sq6"] pub sq6: IntParam,
     #[id = "sq7"] pub sq7: IntParam,
+    #[id = "sq8"] pub sq8: IntParam,
+    #[id = "sq9"] pub sq9: IntParam,
+    #[id = "sqA"] pub sq10: IntParam,
+    #[id = "sqB"] pub sq11: IntParam,
+    #[id = "sqC"] pub sq12: IntParam,
+    #[id = "sqD"] pub sq13: IntParam,
+    #[id = "sqE"] pub sq14: IntParam,
+    #[id = "sqF"] pub sq15: IntParam,
 
     // Per-drum: 9 params each (wave/freq/ratio/noise/pitch_env/pitch_time/decay/burst/level).
     #[id="d0w"] pub d0_wave: IntParam,
@@ -296,6 +341,15 @@ impl Default for SynthParams {
                 .with_unit(" semis").with_step_size(0.1),
             sweep_time: ms("Bend Time", 0.0, 0.0, 2000.0),
 
+            mod_target: EnumParam::new("Mod Target", ModTargetChoice::Pitch),
+            mod_amount: FloatParam::new("Mod Amount", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            mod_delay: ms("Mod Delay", 0.0, 0.0, 2000.0),
+            mod_shape: EnumParam::new("Mod Shape", ModShapeChoice::Step),
+            mod_time: ms("Mod Time", 0.0, 0.0, 2000.0),
+
             mono: BoolParam::new("Monophonic", false),
             arp_rate: FloatParam::new(
                 "Arp Rate",
@@ -353,7 +407,7 @@ impl Default for SynthParams {
             speech_buzz: FloatParam::new("Buzz", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
 
-            speech_seq_len: IntParam::new("Seq Length", 0, IntRange::Linear { min: 0, max: 8 }),
+            speech_seq_len: IntParam::new("Seq Length", 0, IntRange::Linear { min: 0, max: 16 }),
             speech_step_ms: FloatParam::new(
                 "Step Time",
                 120.0,
@@ -370,6 +424,14 @@ impl Default for SynthParams {
             sq5: IntParam::new("Seq 6", 0, IntRange::Linear { min: 0, max: 35 }),
             sq6: IntParam::new("Seq 7", 0, IntRange::Linear { min: 0, max: 35 }),
             sq7: IntParam::new("Seq 8", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq8: IntParam::new("Seq 9", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq9: IntParam::new("Seq 10", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq10: IntParam::new("Seq 11", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq11: IntParam::new("Seq 12", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq12: IntParam::new("Seq 13", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq13: IntParam::new("Seq 14", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq14: IntParam::new("Seq 15", 0, IntRange::Linear { min: 0, max: 35 }),
+            sq15: IntParam::new("Seq 16", 0, IntRange::Linear { min: 0, max: 35 }),
 
             // Defaults are tuned to recreate the original 8 embedded samples.
             // (See src/samples.rs for the originals; numbers below are derived
@@ -575,6 +637,18 @@ impl SynthParams {
             vibrato_delay: self.vibrato_delay.value() / 1000.0,
             sweep_semi: self.sweep_semi.value(),
             sweep_time: self.sweep_time.value() / 1000.0,
+            mod_target: match self.mod_target.value() {
+                ModTargetChoice::Pitch => crate::dsp::ModTarget::Pitch,
+                ModTargetChoice::Duty => crate::dsp::ModTarget::Duty,
+                ModTargetChoice::FmIndex => crate::dsp::ModTarget::FmIndex,
+            },
+            mod_amount: self.mod_amount.value(),
+            mod_delay: self.mod_delay.value() / 1000.0,
+            mod_shape: match self.mod_shape.value() {
+                ModShapeChoice::Step => crate::dsp::ModShape::Step,
+                ModShapeChoice::Linear => crate::dsp::ModShape::Linear,
+            },
+            mod_time: self.mod_time.value() / 1000.0,
             mono: self.mono.value(),
             arp_rate: self.arp_rate.value(),
             legato_mode: self.legato_mode.value(),
@@ -595,6 +669,10 @@ impl SynthParams {
                 self.sq2.value() as usize, self.sq3.value() as usize,
                 self.sq4.value() as usize, self.sq5.value() as usize,
                 self.sq6.value() as usize, self.sq7.value() as usize,
+                self.sq8.value() as usize, self.sq9.value() as usize,
+                self.sq10.value() as usize, self.sq11.value() as usize,
+                self.sq12.value() as usize, self.sq13.value() as usize,
+                self.sq14.value() as usize, self.sq15.value() as usize,
             ],
             speech_seq_len: self.speech_seq_len.value() as usize,
             speech_step_ms: self.speech_step_ms.value(),
@@ -693,7 +771,11 @@ impl SynthParams {
                   4 => &self.d4_level, 5 => &self.d5_level, 6 => &self.d6_level, _ => &self.d7_level }
     }
     pub fn sq(&self, i: usize) -> &IntParam {
-        match i { 0 => &self.sq0, 1 => &self.sq1, 2 => &self.sq2, 3 => &self.sq3,
-                  4 => &self.sq4, 5 => &self.sq5, 6 => &self.sq6, _ => &self.sq7 }
+        match i {
+            0 => &self.sq0, 1 => &self.sq1, 2 => &self.sq2, 3 => &self.sq3,
+            4 => &self.sq4, 5 => &self.sq5, 6 => &self.sq6, 7 => &self.sq7,
+            8 => &self.sq8, 9 => &self.sq9, 10 => &self.sq10, 11 => &self.sq11,
+            12 => &self.sq12, 13 => &self.sq13, 14 => &self.sq14, _ => &self.sq15,
+        }
     }
 }

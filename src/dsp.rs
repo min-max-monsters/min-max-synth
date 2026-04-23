@@ -409,6 +409,73 @@ impl Sweep {
 }
 
 // ---------------------------------------------------------------------------
+// Mod envelope — delayed one-shot step/ramp modulator
+// ---------------------------------------------------------------------------
+
+/// What parameter the mod envelope targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModTarget {
+    /// Pitch offset in semitones.
+    #[default]
+    Pitch,
+    /// Pulse-width duty offset (additive, clamped to 0.05–0.95).
+    Duty,
+    /// FM modulation-index offset (additive).
+    FmIndex,
+}
+
+/// Ramp shape for the mod envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModShape {
+    /// Instant jump to full amount after delay.
+    #[default]
+    Step,
+    /// Linear ramp from 0 to full amount over `time`.
+    Linear,
+}
+
+/// Delayed one-shot modulation envelope.
+///
+/// After `delay` seconds of silence the envelope ramps (or steps) from 0 to
+/// `amount` and holds there for the remainder of the note.  This is NOT a
+/// cycling LFO — it fires once and sticks, which is exactly what retro SFX
+/// and timbral instrument shifts need.
+#[derive(Debug, Default, Clone)]
+pub struct ModEnv {
+    elapsed: f32,
+}
+
+impl ModEnv {
+    pub fn reset(&mut self) {
+        self.elapsed = 0.0;
+    }
+
+    /// Returns the current modulation value (in target-native units).
+    #[inline]
+    pub fn tick(&mut self, sample_rate: f32, delay: f32, amount: f32, shape: ModShape, time: f32) -> f32 {
+        if amount == 0.0 {
+            return 0.0;
+        }
+        self.elapsed += 1.0 / sample_rate;
+        if self.elapsed < delay {
+            return 0.0;
+        }
+        let t_since_delay = self.elapsed - delay;
+        match shape {
+            ModShape::Step => amount,
+            ModShape::Linear => {
+                if time <= 0.0 {
+                    amount
+                } else {
+                    let frac = (t_since_delay / time).min(1.0);
+                    amount * frac
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Drum voice (procedural percussion synthesizer)
 // ---------------------------------------------------------------------------
 
@@ -791,37 +858,37 @@ impl Phoneme {
             Self::Ll => PhonemeSpec { formants: [(350.0, 80.0, 1.0),  (1000.0, 150.0, 0.4),  (2400.0, 200.0, 0.1), (3400.0, 300.0, 0.03)], voiced: 1.0, gain: 0.6 },
             Self::Rr => PhonemeSpec { formants: [(350.0, 80.0, 1.0),  (1060.0, 150.0, 0.35), (1380.0, 200.0, 0.25),(3400.0, 300.0, 0.03)], voiced: 1.0, gain: 0.6 },
             // Fricatives — noise-excited, high-frequency energy
-            Self::Ss => PhonemeSpec { formants: [(4000.0, 500.0, 0.6),(6000.0, 600.0, 0.8),  (8000.0, 800.0, 0.3), (10000.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.15 },
-            Self::Sh => PhonemeSpec { formants: [(2500.0, 400.0, 0.7),(4000.0, 500.0, 0.6),  (6000.0, 700.0, 0.3), (8000.0, 900.0, 0.1)],  voiced: 0.0, gain: 0.15 },
-            Self::Ff => PhonemeSpec { formants: [(1500.0, 600.0, 0.3),(3500.0, 700.0, 0.4),  (5500.0, 800.0, 0.3), (7500.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.12 },
+            Self::Ss => PhonemeSpec { formants: [(4000.0, 500.0, 0.6),(6000.0, 600.0, 0.8),  (8000.0, 800.0, 0.3), (10000.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.3 },
+            Self::Sh => PhonemeSpec { formants: [(2500.0, 400.0, 0.7),(4000.0, 500.0, 0.6),  (6000.0, 700.0, 0.3), (8000.0, 900.0, 0.1)],  voiced: 0.0, gain: 0.3 },
+            Self::Ff => PhonemeSpec { formants: [(1500.0, 600.0, 0.3),(3500.0, 700.0, 0.4),  (5500.0, 800.0, 0.3), (7500.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.25 },
             // Voiced fricatives
-            Self::Zz => PhonemeSpec { formants: [(200.0, 80.0, 0.6),  (4000.0, 500.0, 0.3), (6000.0, 600.0, 0.4), (8000.0, 800.0, 0.15)], voiced: 0.5, gain: 0.15 },
-            Self::Vv => PhonemeSpec { formants: [(200.0, 80.0, 0.7),  (1500.0, 600.0, 0.2), (3500.0, 700.0, 0.3), (5500.0, 800.0, 0.15)], voiced: 0.5, gain: 0.12 },
+            Self::Zz => PhonemeSpec { formants: [(200.0, 80.0, 0.6),  (4000.0, 500.0, 0.3), (6000.0, 600.0, 0.4), (8000.0, 800.0, 0.15)], voiced: 0.5, gain: 0.3 },
+            Self::Vv => PhonemeSpec { formants: [(200.0, 80.0, 0.7),  (1500.0, 600.0, 0.2), (3500.0, 700.0, 0.3), (5500.0, 800.0, 0.15)], voiced: 0.5, gain: 0.25 },
             // Stops — brief noise bursts at characteristic frequencies
-            Self::Bb => PhonemeSpec { formants: [(200.0, 100.0, 0.8), (800.0, 200.0, 0.3),  (1200.0, 300.0, 0.15),(2500.0, 400.0, 0.05)], voiced: 0.6, gain: 0.35 },
-            Self::Dd => PhonemeSpec { formants: [(200.0, 100.0, 0.6), (1600.0, 300.0, 0.5), (2600.0, 400.0, 0.3), (3500.0, 500.0, 0.1)],  voiced: 0.5, gain: 0.35 },
-            Self::Gg => PhonemeSpec { formants: [(200.0, 100.0, 0.5), (1500.0, 200.0, 0.6), (2500.0, 300.0, 0.4), (3500.0, 400.0, 0.1)],  voiced: 0.4, gain: 0.35 },
-            Self::Kk => PhonemeSpec { formants: [(800.0, 300.0, 0.3), (1500.0, 300.0, 0.5), (2500.0, 400.0, 0.5), (3500.0, 500.0, 0.15)], voiced: 0.0, gain: 0.25 },
+            Self::Bb => PhonemeSpec { formants: [(200.0, 100.0, 0.8), (800.0, 200.0, 0.3),  (1200.0, 300.0, 0.15),(2500.0, 400.0, 0.05)], voiced: 0.6, gain: 0.55 },
+            Self::Dd => PhonemeSpec { formants: [(200.0, 100.0, 0.6), (1600.0, 300.0, 0.5), (2600.0, 400.0, 0.3), (3500.0, 500.0, 0.1)],  voiced: 0.5, gain: 0.55 },
+            Self::Gg => PhonemeSpec { formants: [(200.0, 100.0, 0.5), (1500.0, 200.0, 0.6), (2500.0, 300.0, 0.4), (3500.0, 400.0, 0.1)],  voiced: 0.4, gain: 0.55 },
+            Self::Kk => PhonemeSpec { formants: [(800.0, 300.0, 0.3), (1500.0, 300.0, 0.5), (2500.0, 400.0, 0.5), (3500.0, 500.0, 0.15)], voiced: 0.0, gain: 0.45 },
             // Aspirate — breathy noise shaped by wide-band formants
-            Self::Hh => PhonemeSpec { formants: [(500.0, 400.0, 0.3), (1500.0, 500.0, 0.3), (2500.0, 600.0, 0.25),(3500.0, 700.0, 0.15)], voiced: 0.0, gain: 0.12 },
+            Self::Hh => PhonemeSpec { formants: [(500.0, 400.0, 0.3), (1500.0, 500.0, 0.3), (2500.0, 600.0, 0.25),(3500.0, 700.0, 0.15)], voiced: 0.0, gain: 0.25 },
             // Unvoiced alveolar stop
-            Self::Tt => PhonemeSpec { formants: [(300.0, 200.0, 0.3), (3000.0, 400.0, 0.6), (4500.0, 500.0, 0.4), (6000.0, 600.0, 0.15)], voiced: 0.0, gain: 0.25 },
+            Self::Tt => PhonemeSpec { formants: [(300.0, 200.0, 0.3), (3000.0, 400.0, 0.6), (4500.0, 500.0, 0.4), (6000.0, 600.0, 0.15)], voiced: 0.0, gain: 0.45 },
             // Diphthongs — midpoint formants between component vowels
             Self::Ay => PhonemeSpec { formants: [(560.0, 80.0, 1.0),  (1480.0, 110.0, 0.6),  (2500.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
             Self::Ow => PhonemeSpec { formants: [(630.0, 80.0, 1.0),  (980.0, 110.0, 0.65),  (2400.0, 200.0, 0.12),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.9 },
             Self::Ey => PhonemeSpec { formants: [(400.0, 70.0, 1.0),  (2060.0, 100.0, 0.55), (2750.0, 200.0, 0.15),(3400.0, 300.0, 0.05)], voiced: 1.0, gain: 0.95 },
             // Unvoiced bilabial stop — low-freq burst
-            Self::Pp => PhonemeSpec { formants: [(400.0, 200.0, 0.4), (800.0, 300.0, 0.3),  (1200.0, 400.0, 0.15),(2500.0, 500.0, 0.05)], voiced: 0.0, gain: 0.25 },
+            Self::Pp => PhonemeSpec { formants: [(400.0, 200.0, 0.4), (800.0, 300.0, 0.3),  (1200.0, 400.0, 0.15),(2500.0, 500.0, 0.05)], voiced: 0.0, gain: 0.45 },
             // Semivowels — like vowels but quieter, meant as transitions
             Self::Ww => PhonemeSpec { formants: [(300.0, 60.0, 0.8),  (600.0, 100.0, 0.4),   (2400.0, 200.0, 0.08),(3400.0, 300.0, 0.03)], voiced: 1.0, gain: 0.5 },
             Self::Yy => PhonemeSpec { formants: [(260.0, 60.0, 0.8),  (2200.0, 100.0, 0.4),  (3000.0, 200.0, 0.12),(3400.0, 300.0, 0.04)], voiced: 1.0, gain: 0.5 },
             // Velar nasal — like NN but further back
             Self::Ng => PhonemeSpec { formants: [(200.0, 80.0, 1.0),  (1100.0, 200.0, 0.15), (2100.0, 300.0, 0.05),(3400.0, 400.0, 0.02)], voiced: 1.0, gain: 0.45 },
             // Affricate — like TT+SH combined
-            Self::Ch => PhonemeSpec { formants: [(300.0, 200.0, 0.2), (2500.0, 400.0, 0.5),  (4000.0, 500.0, 0.5), (6000.0, 700.0, 0.2)],  voiced: 0.0, gain: 0.18 },
+            Self::Ch => PhonemeSpec { formants: [(300.0, 200.0, 0.2), (2500.0, 400.0, 0.5),  (4000.0, 500.0, 0.5), (6000.0, 700.0, 0.2)],  voiced: 0.0, gain: 0.35 },
             // Dental fricatives — broad gentle noise
-            Self::Th => PhonemeSpec { formants: [(1400.0, 600.0, 0.2),(3500.0, 700.0, 0.3),  (6000.0, 800.0, 0.25),(8000.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.10 },
-            Self::Dh => PhonemeSpec { formants: [(200.0, 80.0, 0.5),  (1400.0, 600.0, 0.15),(3500.0, 700.0, 0.2), (6000.0, 800.0, 0.1)],  voiced: 0.6, gain: 0.12 },
+            Self::Th => PhonemeSpec { formants: [(1400.0, 600.0, 0.2),(3500.0, 700.0, 0.3),  (6000.0, 800.0, 0.25),(8000.0, 1000.0, 0.1)], voiced: 0.0, gain: 0.22 },
+            Self::Dh => PhonemeSpec { formants: [(200.0, 80.0, 0.5),  (1400.0, 600.0, 0.15),(3500.0, 700.0, 0.2), (6000.0, 800.0, 0.1)],  voiced: 0.6, gain: 0.25 },
             // Silence
             Self::Sil => PhonemeSpec { formants: [(200.0, 100.0, 0.0),(1000.0, 200.0, 0.0), (2000.0, 300.0, 0.0), (3000.0, 400.0, 0.0)],  voiced: 1.0, gain: 0.0 },
         }

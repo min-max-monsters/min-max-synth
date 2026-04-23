@@ -2,8 +2,8 @@
 //! optional sample playback. Created once and recycled by the voice pool.
 
 use crate::dsp::{
-    midi_to_hz, Adsr, DrumParams, DrumVoice, FmOsc, Lfo, LpcSynth, NoiseOsc, PulseOsc, SawOsc,
-    Sweep, TriangleOsc, Waveform, WaveOsc,
+    midi_to_hz, Adsr, DrumParams, DrumVoice, FmOsc, Lfo, LpcSynth, ModEnv, ModShape, ModTarget,
+    NoiseOsc, PulseOsc, SawOsc, Sweep, TriangleOsc, Waveform, WaveOsc,
 };
 use crate::params::LegatoMode;
 
@@ -27,6 +27,12 @@ pub struct VoiceParams {
     pub vibrato_delay: f32,
     pub sweep_semi: f32,
     pub sweep_time: f32,
+    // Mod envelope
+    pub mod_target: ModTarget,
+    pub mod_amount: f32,
+    pub mod_delay: f32,
+    pub mod_shape: ModShape,
+    pub mod_time: f32,
     pub mono: bool,
     pub arp_rate: f32,
     pub legato_mode: LegatoMode,
@@ -43,7 +49,7 @@ pub struct VoiceParams {
     pub speech_mode: bool,
     pub phoneme: usize,
     pub speech_buzz: f32,
-    pub speech_seq: [usize; 8],
+    pub speech_seq: [usize; 16],
     pub speech_seq_len: usize,
     pub speech_step_ms: f32,
     pub speech_seq_loop: bool,
@@ -86,6 +92,7 @@ pub struct Voice {
     vibrato: Lfo,
     duty_lfo: Lfo,
     sweep: Sweep,
+    mod_env: ModEnv,
 
     // Sample playback (drum mode)
     drum: DrumVoice,
@@ -118,6 +125,7 @@ impl Voice {
             vibrato: Lfo::default(),
             duty_lfo: Lfo::default(),
             sweep: Sweep::default(),
+            mod_env: ModEnv::default(),
             drum: DrumVoice::default(),
             drum_pitch_mult: 1.0,
             is_drum: false,
@@ -165,6 +173,7 @@ impl Voice {
         self.vibrato.reset();
         self.duty_lfo.reset();
         self.sweep.reset();
+        self.mod_env.reset();
 
         if params.drum_mode {
             self.is_drum = true;
@@ -375,27 +384,44 @@ impl Voice {
             * params.vibrato_depth_semi
             * vib_gain;
         let sweep_offset = self.sweep.tick(self.sample_rate, params.sweep_semi, params.sweep_time);
+
+        // Mod envelope — one-shot delayed modulation.
+        let mod_val = self.mod_env.tick(
+            self.sample_rate,
+            params.mod_delay,
+            params.mod_amount,
+            params.mod_shape,
+            params.mod_time,
+        );
+        // Scale normalised ±1 amount to target-appropriate units.
+        let mod_pitch = if params.mod_target == ModTarget::Pitch { mod_val * 36.0 } else { 0.0 };
+        let mod_duty = if params.mod_target == ModTarget::Duty { mod_val * 0.45 } else { 0.0 };
+        let mod_fm = if params.mod_target == ModTarget::FmIndex { mod_val * 10.0 } else { 0.0 };
+
         let n = self.current_pitch
             + params.octave_shift as f32 * 12.0
             + params.fine_tune_cents / 100.0
             + vib
-            + sweep_offset;
+            + sweep_offset
+            + mod_pitch;
         let freq = midi_to_hz(n);
 
         let duty = if params.duty_lfo_depth > 0.0 {
             let lfo = self.duty_lfo.tick(params.duty_lfo_rate, self.sample_rate);
             // Modulate around the configured duty by ±depth*0.45 (so we never reach 0/1).
-            (params.pulse_duty + lfo * params.duty_lfo_depth * 0.45).clamp(0.05, 0.95)
+            (params.pulse_duty + lfo * params.duty_lfo_depth * 0.45 + mod_duty).clamp(0.05, 0.95)
         } else {
-            params.pulse_duty
+            (params.pulse_duty + mod_duty).clamp(0.05, 0.95)
         };
+
+        let fm_index = params.fm_index + mod_fm;
 
         let raw = match params.waveform {
             Waveform::Pulse => self.pulse.tick(freq, self.sample_rate, duty),
             Waveform::Triangle => self.triangle.tick(freq, self.sample_rate),
             Waveform::Wave4Bit => self.wave.tick(freq, self.sample_rate),
             Waveform::Noise => self.noise.tick(freq, self.sample_rate, params.noise_short),
-            Waveform::Fm => self.fm.tick(freq, self.sample_rate, params.fm_ratio, params.fm_index),
+            Waveform::Fm => self.fm.tick(freq, self.sample_rate, params.fm_ratio, fm_index),
             Waveform::Saw => self.saw.tick(freq, self.sample_rate),
         };
 

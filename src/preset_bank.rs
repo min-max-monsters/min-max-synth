@@ -4,7 +4,7 @@
 //! User presets are stored as JSON files under a `presets/` directory next
 //! to the plugin data path.
 
-use crate::params::{LegatoMode, SynthParams, WaveChoice};
+use crate::params::{LegatoMode, ModShapeChoice, ModTargetChoice, SynthParams, WaveChoice};
 use nih_plug::prelude::{Param, ParamSetter};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -175,6 +175,19 @@ pub struct ParamSnapshot {
     pub vibrato_delay: f32,
     pub sweep_semi: f32,
     pub sweep_time: f32,
+    // Mod envelope — delayed one-shot modulator.
+    /// Target: 0 = Pitch, 1 = Duty, 2 = FM Index.
+    #[serde(default)]
+    pub mod_target: i32,
+    #[serde(default)]
+    pub mod_amount: f32,
+    #[serde(default)]
+    pub mod_delay: f32,
+    /// Shape: 0 = Step, 1 = Linear.
+    #[serde(default)]
+    pub mod_shape: i32,
+    #[serde(default)]
+    pub mod_time: f32,
     pub mono: bool,
     pub arp_rate: f32,
     /// Mono note-transition behaviour. Stored as the enum's `#[id]` string
@@ -275,6 +288,11 @@ impl ParamSnapshot {
             vibrato_delay: p.vibrato_delay.unmodulated_plain_value(),
             sweep_semi: p.sweep_semi.unmodulated_plain_value(),
             sweep_time: p.sweep_time.unmodulated_plain_value(),
+            mod_target: p.mod_target.unmodulated_plain_value() as i32,
+            mod_amount: p.mod_amount.unmodulated_plain_value(),
+            mod_delay: p.mod_delay.unmodulated_plain_value(),
+            mod_shape: p.mod_shape.unmodulated_plain_value() as i32,
+            mod_time: p.mod_time.unmodulated_plain_value(),
             mono: p.mono.unmodulated_plain_value(),
             arp_rate: p.arp_rate.unmodulated_plain_value(),
             legato_mode: p.legato_mode.unmodulated_plain_value() as i32,
@@ -293,7 +311,7 @@ impl ParamSnapshot {
             speech_seq_len: p.speech_seq_len.unmodulated_plain_value(),
             speech_step_ms: p.speech_step_ms.unmodulated_plain_value(),
             speech_seq_loop: p.speech_seq_loop.unmodulated_plain_value(),
-            speech_seq: (0..8).map(|i| p.sq(i).unmodulated_plain_value()).collect(),
+            speech_seq: (0..16).map(|i| p.sq(i).unmodulated_plain_value()).collect(),
             drums,
         }
     }
@@ -327,6 +345,15 @@ impl ParamSnapshot {
         s.set_parameter(&p.vibrato_delay, self.vibrato_delay);
         s.set_parameter(&p.sweep_semi, self.sweep_semi);
         s.set_parameter(&p.sweep_time, self.sweep_time);
+        let mt_variants = [ModTargetChoice::Pitch, ModTargetChoice::Duty, ModTargetChoice::FmIndex];
+        let mt = mt_variants.get(self.mod_target as usize).copied().unwrap_or(ModTargetChoice::Pitch);
+        s.set_parameter(&p.mod_target, mt);
+        s.set_parameter(&p.mod_amount, self.mod_amount);
+        s.set_parameter(&p.mod_delay, self.mod_delay);
+        let ms_variants = [ModShapeChoice::Step, ModShapeChoice::Linear];
+        let ms = ms_variants.get(self.mod_shape as usize).copied().unwrap_or(ModShapeChoice::Step);
+        s.set_parameter(&p.mod_shape, ms);
+        s.set_parameter(&p.mod_time, self.mod_time);
         s.set_parameter(&p.mono, self.mono);
         s.set_parameter(&p.arp_rate, self.arp_rate);
         let legato_variants = [LegatoMode::Retrigger, LegatoMode::Legato, LegatoMode::Glide];
@@ -350,7 +377,7 @@ impl ParamSnapshot {
         s.set_parameter(&p.speech_seq_len, self.speech_seq_len);
         s.set_parameter(&p.speech_step_ms, self.speech_step_ms);
         s.set_parameter(&p.speech_seq_loop, self.speech_seq_loop);
-        for (i, &ph) in self.speech_seq.iter().take(8).enumerate() {
+        for (i, &ph) in self.speech_seq.iter().take(16).enumerate() {
             s.set_parameter(p.sq(i), ph);
         }
         for (i, d) in self.drums.iter().enumerate().take(8) {

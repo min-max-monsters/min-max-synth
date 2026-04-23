@@ -4,6 +4,7 @@
 
 pub mod dsp;
 pub mod editor;
+pub mod g2p;
 pub mod params;
 pub mod preset_bank;
 pub mod samples;

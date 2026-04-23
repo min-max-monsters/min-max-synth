@@ -1,12 +1,13 @@
 //! Egui editor with a chiptune-flavoured layout: rotary knobs, LED toggles,
 //! grouped panels, and an on-screen + QWERTY piano keyboard.
 
-use crate::params::{LegatoMode, SynthParams, WaveChoice};
+use crate::params::{LegatoMode, ModShapeChoice, ModTargetChoice, SynthParams, WaveChoice};
 use crate::preset_bank::{
     Category, ParamSnapshot, PresetBank, PresetMeta, System, Voicing,
 };
 use crate::samples::DrumKind;
 use crate::dsp::{Phoneme, NUM_PHONEMES};
+use crate::g2p::text_to_phonemes;
 use crate::widgets::{apply_style, led_toggle, palette, panel, Knob, VSlider};
 use crate::GuiNoteEvent;
 use crossbeam_queue::ArrayQueue;
@@ -34,6 +35,8 @@ pub struct EditorState {
     // Preset browser
     pub bank: PresetBank,
     pub browser_open: bool,
+    // Speech text input (G2P)
+    pub speech_text: String,
     // Save dialog
     pub save_dialog_open: bool,
     pub save_name: String,
@@ -52,6 +55,7 @@ impl Default for EditorState {
             selected_drum: 0,
             bank,
             browser_open: false,
+            speech_text: String::new(),
             save_dialog_open: false,
             save_name: String::new(),
             save_system: System::Generic,
@@ -244,7 +248,7 @@ fn draw_header(
 
 fn draw_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mut EditorState) {
     if params.speech_mode.value() {
-        draw_speech_main(ui, params, setter);
+        draw_speech_main(ui, params, setter, state);
     } else if params.drum_mode.value() {
         draw_drum_main(ui, params, setter, state);
     } else {
@@ -319,6 +323,16 @@ fn draw_synth_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                 });
             });
             ui.add_space(6.0);
+            panel(ui, "MOD ENV", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.mod_amount, setter).with_label("AMOUNT"));
+                    ui.add(Knob::new(&params.mod_delay, setter).with_label("DELAY"));
+                    ui.add(Knob::new(&params.mod_time, setter).with_label("TIME"));
+                });
+                draw_mod_target_buttons(ui, params, setter);
+                draw_mod_shape_buttons(ui, params, setter);
+            });
+            ui.add_space(6.0);
             panel(ui, "MONO / ARP", palette::ACCENT, |ui| {
                 ui.horizontal(|ui| {
                     led_toggle(ui, &params.mono, setter, "Monophonic");
@@ -346,7 +360,7 @@ fn draw_synth_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
     });
 }
 
-fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, state: &mut EditorState) {
     ui.horizontal_top(|ui| {
         // Left column: phoneme selector + sequencer + voice controls.
         ui.vertical(|ui| {
@@ -414,9 +428,9 @@ fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                             }
                         }
                     });
-                    if seq_len < 8 {
+                    if seq_len < 16 {
                         ui.horizontal(|ui| {
-                            for i in seq_len..8 {
+                            for i in seq_len..16 {
                                 let phon_idx = params.sq(i).value() as usize;
                                 let p = Phoneme::from_index(phon_idx);
                                 let btn = egui::Button::new(
@@ -463,11 +477,11 @@ fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                         .min_size(egui::vec2(44.0, 20.0))
                         .fill(palette::BG_DEEP);
                         if ui.add(btn).clicked() {
-                            let len = phonemes.len().min(8);
+                            let len = phonemes.len().min(16);
                             setter.begin_set_parameter(&params.speech_seq_len);
                             setter.set_parameter(&params.speech_seq_len, len as i32);
                             setter.end_set_parameter(&params.speech_seq_len);
-                            for (i, &ph) in phonemes.iter().take(8).enumerate() {
+                            for (i, &ph) in phonemes.iter().take(16).enumerate() {
                                 setter.begin_set_parameter(params.sq(i));
                                 setter.set_parameter(params.sq(i), ph as i32);
                                 setter.end_set_parameter(params.sq(i));
@@ -475,6 +489,29 @@ fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                         }
                     }
                 });
+                // --- Text-to-phoneme input ---
+                ui.add_space(4.0);
+                ui.label(RichText::new("Type a word (or [AH EE] for raw phonemes)")
+                    .color(palette::TEXT_DIM).size(10.0));
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut state.speech_text)
+                        .desired_width(280.0)
+                        .hint_text("e.g. hello, [MM AE KK SS]")
+                        .font(FontId::monospace(13.0))
+                        .text_color(palette::ACCENT),
+                );
+                if response.changed() {
+                    let phonemes = text_to_phonemes(&state.speech_text, 16);
+                    let len = phonemes.len().min(16);
+                    setter.begin_set_parameter(&params.speech_seq_len);
+                    setter.set_parameter(&params.speech_seq_len, len as i32);
+                    setter.end_set_parameter(&params.speech_seq_len);
+                    for (i, &ph) in phonemes.iter().enumerate() {
+                        setter.begin_set_parameter(params.sq(i));
+                        setter.set_parameter(params.sq(i), ph as i32);
+                        setter.end_set_parameter(params.sq(i));
+                    }
+                }
             });
             ui.add_space(6.0);
             panel(ui, "VOICE", palette::ACCENT, |ui| {
@@ -518,6 +555,16 @@ fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
                     ui.add(Knob::new(&params.vibrato_depth, setter).with_label("DEPTH"));
                     ui.add(Knob::new(&params.vibrato_delay, setter).with_label("DELAY"));
                 });
+            });
+            ui.add_space(6.0);
+            panel(ui, "MOD ENV", palette::BLUE, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&params.mod_amount, setter).with_label("AMOUNT"));
+                    ui.add(Knob::new(&params.mod_delay, setter).with_label("DELAY"));
+                    ui.add(Knob::new(&params.mod_time, setter).with_label("TIME"));
+                });
+                draw_mod_target_buttons(ui, params, setter);
+                draw_mod_shape_buttons(ui, params, setter);
             });
             ui.add_space(6.0);
             panel(ui, "MONO / ARP", palette::ACCENT, |ui| {
@@ -964,6 +1011,57 @@ fn draw_legato_buttons(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) 
     });
 }
 
+fn draw_mod_target_buttons(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    let choices = [
+        (ModTargetChoice::Pitch, "PITCH"),
+        (ModTargetChoice::Duty, "DUTY"),
+        (ModTargetChoice::FmIndex, "FM IDX"),
+    ];
+    let current = params.mod_target.value();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("TGT").monospace().size(9.0).color(palette::TEXT_DIM));
+        for (variant, label) in choices {
+            let selected = current == variant;
+            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+            let btn = egui::Button::new(RichText::new(label).color(fg).monospace().size(9.0))
+                .fill(bg)
+                .stroke(Stroke::new(1.0, palette::BORDER))
+                .min_size(egui::vec2(48.0, 18.0));
+            if ui.add(btn).clicked() {
+                setter.begin_set_parameter(&params.mod_target);
+                setter.set_parameter(&params.mod_target, variant);
+                setter.end_set_parameter(&params.mod_target);
+            }
+        }
+    });
+}
+
+fn draw_mod_shape_buttons(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
+    let choices = [
+        (ModShapeChoice::Step, "STEP"),
+        (ModShapeChoice::Linear, "LINEAR"),
+    ];
+    let current = params.mod_shape.value();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("SHP").monospace().size(9.0).color(palette::TEXT_DIM));
+        for (variant, label) in choices {
+            let selected = current == variant;
+            let bg = if selected { palette::ACCENT_DIM } else { palette::BG_PANEL_HI };
+            let fg = if selected { palette::ACCENT } else { palette::TEXT_DIM };
+            let btn = egui::Button::new(RichText::new(label).color(fg).monospace().size(9.0))
+                .fill(bg)
+                .stroke(Stroke::new(1.0, palette::BORDER))
+                .min_size(egui::vec2(54.0, 18.0));
+            if ui.add(btn).clicked() {
+                setter.begin_set_parameter(&params.mod_shape);
+                setter.set_parameter(&params.mod_shape, variant);
+                setter.end_set_parameter(&params.mod_shape);
+            }
+        }
+    });
+}
+
 /// Small buttons that set LP + HP cutoffs to hardware-authentic values for a
 /// given retro system.  The currently-matching system (if any) is highlighted.
 fn draw_filter_system_buttons(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter) {
@@ -1174,6 +1272,17 @@ fn handle_keyboard(
     state: &mut EditorState,
     note_queue: &Arc<ArrayQueue<GuiNoteEvent>>,
 ) {
+    // Don't send MIDI when a text field has keyboard focus.
+    if ctx.wants_keyboard_input() {
+        // Release any currently held notes so they don't stick.
+        for n in 0..128 {
+            if state.pressed[n] {
+                let _ = note_queue.push(GuiNoteEvent::Off { note: n as u8 });
+                state.pressed[n] = false;
+            }
+        }
+        return;
+    }
     ctx.input(|i| {
         if i.key_pressed(egui::Key::PageUp) {
             state.base_note = (state.base_note + 12).min(108);
