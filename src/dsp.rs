@@ -203,7 +203,10 @@ impl NoiseOsc {
             self.reg |= feedback << 14;
             self.last = if (self.reg & 1) == 0 { 1.0 } else { -1.0 };
         }
-        self.last
+        // Scale down: LFSR noise is always ±1 (RMS = 1.0) while tonal
+        // oscillators have lower RMS.  Broadband noise also sounds louder
+        // perceptually, so apply −6 dB compensation.
+        self.last * 0.5
     }
 }
 
@@ -598,13 +601,15 @@ impl DrumVoice {
         };
 
         // Noise via 15-bit LFSR (same shape as samples.rs).
+        // Scaled by 0.5 (−6 dB) to match perceived loudness of tonal oscs.
         let bit = ((self.lfsr ^ (self.lfsr >> 1)) & 1) as u16;
         self.lfsr = (self.lfsr >> 1) | (bit << 14);
-        let noise = if (self.lfsr & 1) == 0 { 1.0 } else { -1.0 };
+        let noise = if (self.lfsr & 1) == 0 { 0.5 } else { -0.5 };
 
         let mix = tone + noise * dp.noise;
 
-        // Amplitude envelope = sum of exponential decays at burst onsets.
+        // Amplitude envelope = sum of exponential decays at burst onsets,
+        // normalised so multi-burst doesn't blow up the level.
         let decay_s = dp.decay.max(0.001);
         let mut env = 0.0_f32;
         for i in 0..self.burst_count {
@@ -614,6 +619,13 @@ impl DrumVoice {
                 env += scale * (-dt / decay_s).exp();
             }
         }
+        // Normalise: sum of per-burst scales is 1 + 0.85 + 0.70 + 0.55 etc.
+        // Divide by that so the peak stays close to 1.0 regardless of burst
+        // count, preserving the retrigger character without the volume spike.
+        let burst_norm: f32 = (0..self.burst_count)
+            .map(|i| 1.0 - i as f32 * 0.15)
+            .sum();
+        env /= burst_norm;
 
         // Auto-deactivate once well past the last burst and amplitude is
         // negligible. Saves CPU for one-shot voices.
