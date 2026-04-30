@@ -44,7 +44,7 @@ pub struct Knob<'a, P: Param> {
 
 impl<'a, P: Param> Knob<'a, P> {
     pub fn new(param: &'a P, setter: &'a ParamSetter<'a>) -> Self {
-        Self { param, setter, label: None, diameter: 44.0 }
+        Self { param, setter, label: None, diameter: 38.0 }
     }
 
     pub fn with_label(mut self, label: &'a str) -> Self {
@@ -64,9 +64,9 @@ impl<'a, P: Param> Knob<'a, P> {
     }
 
     fn show(self, ui: &mut Ui) -> Response {
-        let label_h = if self.label.is_some() { 14.0 } else { 0.0 };
-        let value_h = 14.0;
-        let total = vec2(self.diameter + 12.0, self.diameter + label_h + value_h + 6.0);
+        let label_h = if self.label.is_some() { 12.0 } else { 0.0 };
+        let value_h = 12.0;
+        let total = vec2(self.diameter + 8.0, self.diameter + label_h + value_h + 4.0);
         let (rect, mut resp) = ui.allocate_exact_size(total, Sense::click_and_drag());
 
         // Layout sub-rectangles top to bottom: label, knob, value.
@@ -532,21 +532,21 @@ pub fn panel<R>(ui: &mut Ui, title: &str, accent: Color32, add_contents: impl Fn
     let frame = egui::Frame::group(ui.style())
         .fill(palette::BG_PANEL)
         .stroke(Stroke::new(1.0, palette::BORDER))
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(egui::Margin::symmetric(6, 4))
         .corner_radius(4.0);
     frame
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let (tag_rect, _) = ui.allocate_exact_size(vec2(6.0, 14.0), Sense::hover());
+                let (tag_rect, _) = ui.allocate_exact_size(vec2(4.0, 12.0), Sense::hover());
                 ui.painter().rect_filled(tag_rect, 1.0, accent);
                 ui.label(
                     egui::RichText::new(title)
                         .color(palette::TEXT)
                         .strong()
-                        .size(12.0),
+                        .size(11.0),
                 );
             });
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             add_contents(ui)
         })
         .inner
