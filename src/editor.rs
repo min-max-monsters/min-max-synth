@@ -413,6 +413,7 @@ fn draw_speech_main(ui: &mut Ui, params: &SynthParams, setter: &ParamSetter, sta
                     let words: &[(&str, &[usize])] = &[
                         ("MIN",      &[10, 2, 11]),
                         ("MAX",      &[10, 4, 22, 14]),
+                        ("MONSTERS", &[10, 0, 11, 14, 25, 9, 17]),
                         ("HELLO",    &[24, 3, 12, 6]),
                         ("WORLD",    &[30, 9, 12, 20]),
                         ("YEAH",     &[31, 4]),

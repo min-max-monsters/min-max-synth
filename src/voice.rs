@@ -273,7 +273,7 @@ impl Voice {
         let pitch_hz = midi_to_hz(self.current_pitch + params.octave_shift as f32 * 12.0
             + params.fine_tune_cents / 100.0);
         let raw = self.lpc.tick(pitch_hz, params.speech_buzz);
-        raw * env * self.velocity
+        raw * 4.0 * env * self.velocity
     }
 
     /// Render one sample. The bitcrusher is applied to the bus, not per-voice,
@@ -348,7 +348,7 @@ impl Voice {
             let freq = midi_to_hz(n);
 
             let raw = self.lpc.tick(freq, params.speech_buzz);
-            return raw * env * self.velocity;
+            return raw * 4.0 * env * self.velocity;
         }
 
         let env = self.env.tick();
