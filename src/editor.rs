@@ -14,6 +14,7 @@ use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::{Editor, ParamSetter};
 use nih_plug_egui::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui};
 use nih_plug_egui::{create_egui_editor, EguiState};
+use nih_plug_egui::resizable_window::ResizableWindow;
 use std::sync::Arc;
 
 /// QWERTY-to-MIDI mapping like a tracker / many soft synths.
@@ -68,6 +69,7 @@ pub fn create_editor(
     note_queue: Arc<ArrayQueue<GuiNoteEvent>>,
 ) -> Option<Box<dyn Editor>> {
     let egui_state: Arc<EguiState> = params.editor_state.clone();
+    let egui_state_inner = egui_state.clone();
     create_egui_editor(
         egui_state,
         EditorState::default(),
@@ -120,10 +122,12 @@ pub fn create_editor(
             let main_frame = egui::Frame::default()
                 .fill(palette::BG_DEEP)
                 .inner_margin(egui::Margin { left: 6, right: 6, top: 2, bottom: 2 });
-            egui::CentralPanel::default()
-                .frame(main_frame)
-                .show(ctx, |ui| {
-                    draw_main(ui, &params, setter, state);
+            ResizableWindow::new("resize")
+                .min_size([600.0, 400.0])
+                .show(ctx, &egui_state_inner, |ui| {
+                    main_frame.show(ui, |ui| {
+                        draw_main(ui, &params, setter, state);
+                    });
                 });
         },
     )
@@ -203,10 +207,10 @@ fn draw_header(
             let name = state
                 .bank
                 .current_entry()
-                .map(|e| e.name.as_str())
-                .unwrap_or("—");
+                .map(|e| format!("[{}] {}", e.meta.system.label(), e.name))
+                .unwrap_or_else(|| "—".to_string());
             ui.label(
-                RichText::new(name)
+                RichText::new(&name)
                     .color(palette::TEXT)
                     .monospace()
                     .size(11.0),
@@ -727,7 +731,8 @@ fn draw_preset_browser(
                 .map(|(fi, &ei)| {
                     let e = &state.bank.entries[ei];
                     let sel = fi == state.bank.selected;
-                    (fi, ei, e.name.clone(), e.is_factory, sel)
+                    let display_name = format!("[{}] {}", e.meta.system.label(), e.name);
+                    (fi, ei, display_name, e.is_factory, sel)
                 })
                 .collect();
             let avail_w = ui.available_width();

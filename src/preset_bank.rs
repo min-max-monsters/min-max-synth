@@ -83,6 +83,7 @@ pub enum Category {
     Organ,
     Bell,
     Noise,
+    Vocal,
 }
 
 impl Category {
@@ -100,6 +101,7 @@ impl Category {
         Self::Organ,
         Self::Bell,
         Self::Noise,
+        Self::Vocal,
     ];
 
     pub fn label(self) -> &'static str {
@@ -117,6 +119,7 @@ impl Category {
             Self::Organ => "ORGAN",
             Self::Bell => "BELL",
             Self::Noise => "NOISE",
+            Self::Vocal => "VOCAL",
         }
     }
 }
@@ -156,7 +159,8 @@ pub struct PresetMeta {
 // Param snapshot — all automatable values captured as plain floats.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Full internal state for all parameters (used at runtime).
+#[derive(Debug, Clone)]
 pub struct ParamSnapshot {
     pub gain: f32,
     pub waveform: i32,
@@ -175,29 +179,14 @@ pub struct ParamSnapshot {
     pub vibrato_delay: f32,
     pub sweep_semi: f32,
     pub sweep_time: f32,
-    // Mod envelope — delayed one-shot modulator.
-    /// Target: 0 = Pitch, 1 = Duty, 2 = FM Index.
-    #[serde(default)]
     pub mod_target: i32,
-    #[serde(default)]
     pub mod_amount: f32,
-    #[serde(default)]
     pub mod_delay: f32,
-    /// Shape: 0 = Step, 1 = Linear.
-    #[serde(default)]
     pub mod_shape: i32,
-    #[serde(default)]
     pub mod_time: f32,
     pub mono: bool,
     pub arp_rate: f32,
-    /// Mono note-transition behaviour. Stored as the enum's `#[id]` string
-    /// so the JSON stays human-readable. Defaults to "retrig" (the
-    /// pre-legato behaviour) for backward compatibility with existing
-    /// presets.
-    #[serde(default = "default_legato_mode")]
     pub legato_mode: i32,
-    /// Glide time in milliseconds (matches the parameter's display unit).
-    #[serde(default = "default_glide_time")]
     pub glide_time: f32,
     pub bit_depth: f32,
     pub bit_rate: f32,
@@ -207,8 +196,167 @@ pub struct ParamSnapshot {
     pub octave: i32,
     pub drum_mode: bool,
     pub drum_pitch: bool,
-    #[serde(default)]
     pub speech_mode: bool,
+    pub phoneme: i32,
+    pub speech_buzz: f32,
+    pub speech_seq_len: i32,
+    pub speech_step_ms: f32,
+    pub speech_seq_loop: bool,
+    pub speech_seq: Vec<i32>,
+    pub drums: Vec<DrumSlotSnapshot>,
+}
+
+// ---------------------------------------------------------------------------
+// Mode-specific JSON representations (discriminated union)
+// ---------------------------------------------------------------------------
+
+/// Synth-mode preset (no drum slots, no speech params).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SynthPresetParams {
+    pub gain: f32,
+    pub waveform: i32,
+    #[serde(default = "default_pulse_duty")]
+    pub pulse_duty: f32,
+    #[serde(default)]
+    pub noise_short: bool,
+    #[serde(default = "default_fm_ratio")]
+    pub fm_ratio: f32,
+    #[serde(default = "default_fm_index")]
+    pub fm_index: f32,
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+    #[serde(default = "default_duty_lfo_rate")]
+    pub duty_lfo_rate: f32,
+    #[serde(default)]
+    pub duty_lfo_depth: f32,
+    #[serde(default = "default_vibrato_rate")]
+    pub vibrato_rate: f32,
+    #[serde(default)]
+    pub vibrato_depth: f32,
+    #[serde(default)]
+    pub vibrato_delay: f32,
+    #[serde(default)]
+    pub sweep_semi: f32,
+    #[serde(default)]
+    pub sweep_time: f32,
+    #[serde(default)]
+    pub mod_target: i32,
+    #[serde(default)]
+    pub mod_amount: f32,
+    #[serde(default)]
+    pub mod_delay: f32,
+    #[serde(default)]
+    pub mod_shape: i32,
+    #[serde(default)]
+    pub mod_time: f32,
+    #[serde(default)]
+    pub mono: bool,
+    #[serde(default)]
+    pub arp_rate: f32,
+    #[serde(default)]
+    pub legato_mode: i32,
+    #[serde(default = "default_glide_time")]
+    pub glide_time: f32,
+    #[serde(default = "default_bit_depth")]
+    pub bit_depth: f32,
+    #[serde(default = "default_bit_rate")]
+    pub bit_rate: f32,
+    #[serde(default = "default_lp_cutoff")]
+    pub lp_cutoff: f32,
+    #[serde(default = "default_hp_cutoff")]
+    pub hp_cutoff: f32,
+    #[serde(default)]
+    pub fine_tune: f32,
+    #[serde(default)]
+    pub octave: i32,
+}
+
+/// Drum-mode preset (drum slots + shared output params).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrumPresetParams {
+    #[serde(default = "default_gain")]
+    pub gain: f32,
+    #[serde(default)]
+    pub drum_pitch: bool,
+    pub slots: Vec<DrumSlotSnapshot>,
+    #[serde(default = "default_bit_depth")]
+    pub bit_depth: f32,
+    #[serde(default = "default_bit_rate")]
+    pub bit_rate: f32,
+    #[serde(default = "default_lp_cutoff")]
+    pub lp_cutoff: f32,
+    #[serde(default = "default_hp_cutoff")]
+    pub hp_cutoff: f32,
+    #[serde(default)]
+    pub fine_tune: f32,
+    #[serde(default)]
+    pub octave: i32,
+}
+
+/// Speech-mode preset (synth params + speech articulation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeechPresetParams {
+    pub gain: f32,
+    pub waveform: i32,
+    #[serde(default = "default_pulse_duty")]
+    pub pulse_duty: f32,
+    #[serde(default)]
+    pub noise_short: bool,
+    #[serde(default = "default_fm_ratio")]
+    pub fm_ratio: f32,
+    #[serde(default = "default_fm_index")]
+    pub fm_index: f32,
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+    #[serde(default = "default_duty_lfo_rate")]
+    pub duty_lfo_rate: f32,
+    #[serde(default)]
+    pub duty_lfo_depth: f32,
+    #[serde(default = "default_vibrato_rate")]
+    pub vibrato_rate: f32,
+    #[serde(default)]
+    pub vibrato_depth: f32,
+    #[serde(default)]
+    pub vibrato_delay: f32,
+    #[serde(default)]
+    pub sweep_semi: f32,
+    #[serde(default)]
+    pub sweep_time: f32,
+    #[serde(default)]
+    pub mod_target: i32,
+    #[serde(default)]
+    pub mod_amount: f32,
+    #[serde(default)]
+    pub mod_delay: f32,
+    #[serde(default)]
+    pub mod_shape: i32,
+    #[serde(default)]
+    pub mod_time: f32,
+    #[serde(default)]
+    pub mono: bool,
+    #[serde(default)]
+    pub arp_rate: f32,
+    #[serde(default)]
+    pub legato_mode: i32,
+    #[serde(default = "default_glide_time")]
+    pub glide_time: f32,
+    #[serde(default = "default_bit_depth")]
+    pub bit_depth: f32,
+    #[serde(default = "default_bit_rate")]
+    pub bit_rate: f32,
+    #[serde(default = "default_lp_cutoff")]
+    pub lp_cutoff: f32,
+    #[serde(default = "default_hp_cutoff")]
+    pub hp_cutoff: f32,
+    #[serde(default)]
+    pub fine_tune: f32,
+    #[serde(default)]
+    pub octave: i32,
+    // Speech-specific
     #[serde(default)]
     pub phoneme: i32,
     #[serde(default)]
@@ -221,20 +369,281 @@ pub struct ParamSnapshot {
     pub speech_seq_loop: bool,
     #[serde(default)]
     pub speech_seq: Vec<i32>,
-    // Per-drum slots (8 × 9 params = 72 values)
-    pub drums: Vec<DrumSlotSnapshot>,
 }
 
-fn default_speech_step_ms() -> f32 {
-    120.0
+// Default value helpers
+fn default_gain() -> f32 { 0.354_813_39 }
+fn default_pulse_duty() -> f32 { 0.5 }
+fn default_fm_ratio() -> f32 { 2.0 }
+fn default_fm_index() -> f32 { 1.5 }
+fn default_duty_lfo_rate() -> f32 { 4.0 }
+fn default_vibrato_rate() -> f32 { 5.0 }
+fn default_glide_time() -> f32 { 60.0 }
+fn default_bit_depth() -> f32 { 16.0 }
+fn default_bit_rate() -> f32 { 44100.0 }
+fn default_lp_cutoff() -> f32 { 14000.0 }
+fn default_hp_cutoff() -> f32 { 37.0 }
+fn default_speech_step_ms() -> f32 { 120.0 }
+
+/// Default drum slots (matches the built-in init state).
+pub fn default_drum_slots() -> Vec<DrumSlotSnapshot> {
+    vec![
+        DrumSlotSnapshot { wave: 1, freq: 45.0, ratio: 0.0, noise: 0.0, pitch_env: 17.0, pitch_time: 40.0, decay: 250.0, burst: 0.0, level: 1.0 },
+        DrumSlotSnapshot { wave: 1, freq: 200.0, ratio: 0.0, noise: 0.7, pitch_env: 0.0, pitch_time: 1.0, decay: 120.0, burst: 0.0, level: 1.0 },
+        DrumSlotSnapshot { wave: 0, freq: 100.0, ratio: 0.0, noise: 1.0, pitch_env: 0.0, pitch_time: 1.0, decay: 30.0, burst: 0.0, level: 0.7 },
+        DrumSlotSnapshot { wave: 0, freq: 100.0, ratio: 0.0, noise: 1.0, pitch_env: 0.0, pitch_time: 1.0, decay: 250.0, burst: 0.0, level: 0.7 },
+        DrumSlotSnapshot { wave: 1, freq: 90.0, ratio: 0.0, noise: 0.0, pitch_env: 12.0, pitch_time: 80.0, decay: 300.0, burst: 0.0, level: 1.0 },
+        DrumSlotSnapshot { wave: 0, freq: 100.0, ratio: 0.0, noise: 1.0, pitch_env: 0.0, pitch_time: 1.0, decay: 200.0, burst: 1.0, level: 0.8 },
+        DrumSlotSnapshot { wave: 3, freq: 540.0, ratio: 1.48, noise: 0.0, pitch_env: 0.0, pitch_time: 1.0, decay: 150.0, burst: 0.0, level: 0.7 },
+        DrumSlotSnapshot { wave: 3, freq: 80.0, ratio: 0.0, noise: 0.0, pitch_env: 50.0, pitch_time: 100.0, decay: 250.0, burst: 0.0, level: 1.0 },
+    ]
 }
 
-fn default_legato_mode() -> i32 {
-    0 // LegatoMode::Retrigger
-}
+// ---------------------------------------------------------------------------
+// Conversion: mode-specific structs ↔ ParamSnapshot
+// ---------------------------------------------------------------------------
 
-fn default_glide_time() -> f32 {
-    60.0
+impl ParamSnapshot {
+    /// Build from a synth-mode preset (drum/speech get defaults).
+    pub fn from_synth(s: &SynthPresetParams) -> Self {
+        Self {
+            gain: s.gain,
+            waveform: s.waveform,
+            pulse_duty: s.pulse_duty,
+            noise_short: s.noise_short,
+            fm_ratio: s.fm_ratio,
+            fm_index: s.fm_index,
+            attack: s.attack,
+            decay: s.decay,
+            sustain: s.sustain,
+            release: s.release,
+            duty_lfo_rate: s.duty_lfo_rate,
+            duty_lfo_depth: s.duty_lfo_depth,
+            vibrato_rate: s.vibrato_rate,
+            vibrato_depth: s.vibrato_depth,
+            vibrato_delay: s.vibrato_delay,
+            sweep_semi: s.sweep_semi,
+            sweep_time: s.sweep_time,
+            mod_target: s.mod_target,
+            mod_amount: s.mod_amount,
+            mod_delay: s.mod_delay,
+            mod_shape: s.mod_shape,
+            mod_time: s.mod_time,
+            mono: s.mono,
+            arp_rate: s.arp_rate,
+            legato_mode: s.legato_mode,
+            glide_time: s.glide_time,
+            bit_depth: s.bit_depth,
+            bit_rate: s.bit_rate,
+            lp_cutoff: s.lp_cutoff,
+            hp_cutoff: s.hp_cutoff,
+            fine_tune: s.fine_tune,
+            octave: s.octave,
+            drum_mode: false,
+            drum_pitch: true,
+            speech_mode: false,
+            phoneme: 0,
+            speech_buzz: 0.0,
+            speech_seq_len: 0,
+            speech_step_ms: 120.0,
+            speech_seq_loop: false,
+            speech_seq: Vec::new(),
+            drums: default_drum_slots(),
+        }
+    }
+
+    /// Build from a drum-mode preset (synth/speech get defaults).
+    pub fn from_drums(d: &DrumPresetParams) -> Self {
+        Self {
+            gain: d.gain,
+            waveform: 0,
+            pulse_duty: 0.5,
+            noise_short: false,
+            fm_ratio: 2.0,
+            fm_index: 1.5,
+            attack: 5.0,
+            decay: 100.0,
+            sustain: 0.7,
+            release: 150.0,
+            duty_lfo_rate: 4.0,
+            duty_lfo_depth: 0.0,
+            vibrato_rate: 5.0,
+            vibrato_depth: 0.0,
+            vibrato_delay: 0.0,
+            sweep_semi: 0.0,
+            sweep_time: 0.0,
+            mod_target: 0,
+            mod_amount: 0.0,
+            mod_delay: 0.0,
+            mod_shape: 0,
+            mod_time: 0.0,
+            mono: false,
+            arp_rate: 0.0,
+            legato_mode: 0,
+            glide_time: 60.0,
+            bit_depth: d.bit_depth,
+            bit_rate: d.bit_rate,
+            lp_cutoff: d.lp_cutoff,
+            hp_cutoff: d.hp_cutoff,
+            fine_tune: d.fine_tune,
+            octave: d.octave,
+            drum_mode: true,
+            drum_pitch: d.drum_pitch,
+            speech_mode: false,
+            phoneme: 0,
+            speech_buzz: 0.0,
+            speech_seq_len: 0,
+            speech_step_ms: 120.0,
+            speech_seq_loop: false,
+            speech_seq: Vec::new(),
+            drums: d.slots.clone(),
+        }
+    }
+
+    /// Build from a speech-mode preset (drum gets defaults).
+    pub fn from_speech(s: &SpeechPresetParams) -> Self {
+        Self {
+            gain: s.gain,
+            waveform: s.waveform,
+            pulse_duty: s.pulse_duty,
+            noise_short: s.noise_short,
+            fm_ratio: s.fm_ratio,
+            fm_index: s.fm_index,
+            attack: s.attack,
+            decay: s.decay,
+            sustain: s.sustain,
+            release: s.release,
+            duty_lfo_rate: s.duty_lfo_rate,
+            duty_lfo_depth: s.duty_lfo_depth,
+            vibrato_rate: s.vibrato_rate,
+            vibrato_depth: s.vibrato_depth,
+            vibrato_delay: s.vibrato_delay,
+            sweep_semi: s.sweep_semi,
+            sweep_time: s.sweep_time,
+            mod_target: s.mod_target,
+            mod_amount: s.mod_amount,
+            mod_delay: s.mod_delay,
+            mod_shape: s.mod_shape,
+            mod_time: s.mod_time,
+            mono: s.mono,
+            arp_rate: s.arp_rate,
+            legato_mode: s.legato_mode,
+            glide_time: s.glide_time,
+            bit_depth: s.bit_depth,
+            bit_rate: s.bit_rate,
+            lp_cutoff: s.lp_cutoff,
+            hp_cutoff: s.hp_cutoff,
+            fine_tune: s.fine_tune,
+            octave: s.octave,
+            drum_mode: false,
+            drum_pitch: true,
+            speech_mode: true,
+            phoneme: s.phoneme,
+            speech_buzz: s.speech_buzz,
+            speech_seq_len: s.speech_seq_len,
+            speech_step_ms: s.speech_step_ms,
+            speech_seq_loop: s.speech_seq_loop,
+            speech_seq: s.speech_seq.clone(),
+            drums: default_drum_slots(),
+        }
+    }
+
+    /// Convert to synth-mode params for serialization.
+    pub fn to_synth(&self) -> SynthPresetParams {
+        SynthPresetParams {
+            gain: self.gain,
+            waveform: self.waveform,
+            pulse_duty: self.pulse_duty,
+            noise_short: self.noise_short,
+            fm_ratio: self.fm_ratio,
+            fm_index: self.fm_index,
+            attack: self.attack,
+            decay: self.decay,
+            sustain: self.sustain,
+            release: self.release,
+            duty_lfo_rate: self.duty_lfo_rate,
+            duty_lfo_depth: self.duty_lfo_depth,
+            vibrato_rate: self.vibrato_rate,
+            vibrato_depth: self.vibrato_depth,
+            vibrato_delay: self.vibrato_delay,
+            sweep_semi: self.sweep_semi,
+            sweep_time: self.sweep_time,
+            mod_target: self.mod_target,
+            mod_amount: self.mod_amount,
+            mod_delay: self.mod_delay,
+            mod_shape: self.mod_shape,
+            mod_time: self.mod_time,
+            mono: self.mono,
+            arp_rate: self.arp_rate,
+            legato_mode: self.legato_mode,
+            glide_time: self.glide_time,
+            bit_depth: self.bit_depth,
+            bit_rate: self.bit_rate,
+            lp_cutoff: self.lp_cutoff,
+            hp_cutoff: self.hp_cutoff,
+            fine_tune: self.fine_tune,
+            octave: self.octave,
+        }
+    }
+
+    /// Convert to drum-mode params for serialization.
+    pub fn to_drums(&self) -> DrumPresetParams {
+        DrumPresetParams {
+            gain: self.gain,
+            drum_pitch: self.drum_pitch,
+            slots: self.drums.clone(),
+            bit_depth: self.bit_depth,
+            bit_rate: self.bit_rate,
+            lp_cutoff: self.lp_cutoff,
+            hp_cutoff: self.hp_cutoff,
+            fine_tune: self.fine_tune,
+            octave: self.octave,
+        }
+    }
+
+    /// Convert to speech-mode params for serialization.
+    pub fn to_speech(&self) -> SpeechPresetParams {
+        SpeechPresetParams {
+            gain: self.gain,
+            waveform: self.waveform,
+            pulse_duty: self.pulse_duty,
+            noise_short: self.noise_short,
+            fm_ratio: self.fm_ratio,
+            fm_index: self.fm_index,
+            attack: self.attack,
+            decay: self.decay,
+            sustain: self.sustain,
+            release: self.release,
+            duty_lfo_rate: self.duty_lfo_rate,
+            duty_lfo_depth: self.duty_lfo_depth,
+            vibrato_rate: self.vibrato_rate,
+            vibrato_depth: self.vibrato_depth,
+            vibrato_delay: self.vibrato_delay,
+            sweep_semi: self.sweep_semi,
+            sweep_time: self.sweep_time,
+            mod_target: self.mod_target,
+            mod_amount: self.mod_amount,
+            mod_delay: self.mod_delay,
+            mod_shape: self.mod_shape,
+            mod_time: self.mod_time,
+            mono: self.mono,
+            arp_rate: self.arp_rate,
+            legato_mode: self.legato_mode,
+            glide_time: self.glide_time,
+            bit_depth: self.bit_depth,
+            bit_rate: self.bit_rate,
+            lp_cutoff: self.lp_cutoff,
+            hp_cutoff: self.hp_cutoff,
+            fine_tune: self.fine_tune,
+            octave: self.octave,
+            phoneme: self.phoneme,
+            speech_buzz: self.speech_buzz,
+            speech_seq_len: self.speech_seq_len,
+            speech_step_ms: self.speech_step_ms,
+            speech_seq_loop: self.speech_seq_loop,
+            speech_seq: self.speech_seq.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,14 +827,205 @@ pub struct PresetEntry {
 }
 
 // ---------------------------------------------------------------------------
-// User preset file format
+// Preset file format — discriminated union by key presence
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserPresetFile {
+/// On-disk format: exactly one of `synth`, `drums`, or `speech` is present.
+/// The legacy `params` key is accepted for backward compatibility with old
+/// user presets.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresetFile {
     pub name: String,
     pub meta: PresetMeta,
-    pub params: ParamSnapshot,
+    /// New format: synth-mode preset.
+    #[serde(default)]
+    pub synth: Option<SynthPresetParams>,
+    /// New format: drum-mode preset.
+    #[serde(default)]
+    pub drums: Option<DrumPresetParams>,
+    /// New format: speech-mode preset.
+    #[serde(default)]
+    pub speech: Option<SpeechPresetParams>,
+    /// Legacy format (old flat params blob). Accepted for backward compat.
+    #[serde(default)]
+    pub params: Option<LegacyParamSnapshot>,
+}
+
+/// Legacy flat snapshot — used only for deserializing old user presets.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LegacyParamSnapshot {
+    pub gain: f32,
+    pub waveform: i32,
+    pub pulse_duty: f32,
+    pub noise_short: bool,
+    pub fm_ratio: f32,
+    pub fm_index: f32,
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+    pub duty_lfo_rate: f32,
+    pub duty_lfo_depth: f32,
+    pub vibrato_rate: f32,
+    pub vibrato_depth: f32,
+    pub vibrato_delay: f32,
+    pub sweep_semi: f32,
+    pub sweep_time: f32,
+    #[serde(default)]
+    pub mod_target: i32,
+    #[serde(default)]
+    pub mod_amount: f32,
+    #[serde(default)]
+    pub mod_delay: f32,
+    #[serde(default)]
+    pub mod_shape: i32,
+    #[serde(default)]
+    pub mod_time: f32,
+    pub mono: bool,
+    pub arp_rate: f32,
+    #[serde(default)]
+    pub legato_mode: i32,
+    #[serde(default = "default_glide_time")]
+    pub glide_time: f32,
+    pub bit_depth: f32,
+    pub bit_rate: f32,
+    pub lp_cutoff: f32,
+    pub hp_cutoff: f32,
+    pub fine_tune: f32,
+    pub octave: i32,
+    #[serde(default)]
+    pub drum_mode: bool,
+    #[serde(default)]
+    pub drum_pitch: bool,
+    #[serde(default)]
+    pub speech_mode: bool,
+    #[serde(default)]
+    pub phoneme: i32,
+    #[serde(default)]
+    pub speech_buzz: f32,
+    #[serde(default)]
+    pub speech_seq_len: i32,
+    #[serde(default = "default_speech_step_ms")]
+    pub speech_step_ms: f32,
+    #[serde(default)]
+    pub speech_seq_loop: bool,
+    #[serde(default)]
+    pub speech_seq: Vec<i32>,
+    #[serde(default)]
+    pub drums: Vec<DrumSlotSnapshot>,
+}
+
+impl LegacyParamSnapshot {
+    pub fn into_snapshot(self) -> ParamSnapshot {
+        ParamSnapshot {
+            gain: self.gain,
+            waveform: self.waveform,
+            pulse_duty: self.pulse_duty,
+            noise_short: self.noise_short,
+            fm_ratio: self.fm_ratio,
+            fm_index: self.fm_index,
+            attack: self.attack,
+            decay: self.decay,
+            sustain: self.sustain,
+            release: self.release,
+            duty_lfo_rate: self.duty_lfo_rate,
+            duty_lfo_depth: self.duty_lfo_depth,
+            vibrato_rate: self.vibrato_rate,
+            vibrato_depth: self.vibrato_depth,
+            vibrato_delay: self.vibrato_delay,
+            sweep_semi: self.sweep_semi,
+            sweep_time: self.sweep_time,
+            mod_target: self.mod_target,
+            mod_amount: self.mod_amount,
+            mod_delay: self.mod_delay,
+            mod_shape: self.mod_shape,
+            mod_time: self.mod_time,
+            mono: self.mono,
+            arp_rate: self.arp_rate,
+            legato_mode: self.legato_mode,
+            glide_time: self.glide_time,
+            bit_depth: self.bit_depth,
+            bit_rate: self.bit_rate,
+            lp_cutoff: self.lp_cutoff,
+            hp_cutoff: self.hp_cutoff,
+            fine_tune: self.fine_tune,
+            octave: self.octave,
+            drum_mode: self.drum_mode,
+            drum_pitch: self.drum_pitch,
+            speech_mode: self.speech_mode,
+            phoneme: self.phoneme,
+            speech_buzz: self.speech_buzz,
+            speech_seq_len: self.speech_seq_len,
+            speech_step_ms: self.speech_step_ms,
+            speech_seq_loop: self.speech_seq_loop,
+            speech_seq: self.speech_seq,
+            drums: if self.drums.is_empty() { default_drum_slots() } else { self.drums },
+        }
+    }
+}
+
+impl PresetFile {
+    /// Resolve the discriminated union into a full `ParamSnapshot`.
+    pub fn into_snapshot(self) -> ParamSnapshot {
+        if let Some(s) = self.synth {
+            ParamSnapshot::from_synth(&s)
+        } else if let Some(d) = self.drums {
+            ParamSnapshot::from_drums(&d)
+        } else if let Some(s) = self.speech {
+            ParamSnapshot::from_speech(&s)
+        } else if let Some(legacy) = self.params {
+            legacy.into_snapshot()
+        } else {
+            // Fallback: return init-state synth snapshot
+            ParamSnapshot::from_synth(&SynthPresetParams {
+                gain: default_gain(),
+                waveform: 0,
+                pulse_duty: 0.5,
+                noise_short: false,
+                fm_ratio: 2.0,
+                fm_index: 1.5,
+                attack: 5.0,
+                decay: 100.0,
+                sustain: 0.7,
+                release: 150.0,
+                duty_lfo_rate: 4.0,
+                duty_lfo_depth: 0.0,
+                vibrato_rate: 5.0,
+                vibrato_depth: 0.0,
+                vibrato_delay: 0.0,
+                sweep_semi: 0.0,
+                sweep_time: 0.0,
+                mod_target: 0,
+                mod_amount: 0.0,
+                mod_delay: 0.0,
+                mod_shape: 0,
+                mod_time: 0.0,
+                mono: false,
+                arp_rate: 0.0,
+                legato_mode: 0,
+                glide_time: 60.0,
+                bit_depth: 16.0,
+                bit_rate: 44100.0,
+                lp_cutoff: 14000.0,
+                hp_cutoff: 37.0,
+                fine_tune: 0.0,
+                octave: 0,
+            })
+        }
+    }
+}
+
+/// Serializable output format for saving user presets.
+#[derive(Debug, Clone, Serialize)]
+struct PresetFileSave {
+    name: String,
+    meta: PresetMeta,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    synth: Option<SynthPresetParams>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drums: Option<DrumPresetParams>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speech: Option<SpeechPresetParams>,
 }
 
 // ---------------------------------------------------------------------------
@@ -477,15 +1077,17 @@ impl PresetBank {
                 continue;
             }
             let Ok(data) = std::fs::read_to_string(&path) else { continue };
-            let Ok(file) = serde_json::from_str::<UserPresetFile>(&data) else { continue };
+            let Ok(file) = serde_json::from_str::<PresetFile>(&data) else { continue };
             // Avoid duplicates by name
             if self.entries.iter().any(|e| !e.is_factory && e.name == file.name) {
                 continue;
             }
+            let name = file.name.clone();
+            let meta = file.meta.clone();
             self.entries.push(PresetEntry {
-                name: file.name,
-                meta: file.meta,
-                snapshot: file.params,
+                name,
+                meta,
+                snapshot: file.into_snapshot(),
                 is_factory: false,
             });
         }
@@ -494,10 +1096,12 @@ impl PresetBank {
 
     /// Save a user preset to disk.
     pub fn save_user_preset(&mut self, name: &str, meta: PresetMeta, snap: ParamSnapshot) {
-        let file = UserPresetFile {
+        let file = PresetFileSave {
             name: name.to_string(),
             meta: meta.clone(),
-            params: snap.clone(),
+            synth: if snap.drum_mode || snap.speech_mode { None } else { Some(snap.to_synth()) },
+            drums: if snap.drum_mode { Some(snap.to_drums()) } else { None },
+            speech: if snap.speech_mode { Some(snap.to_speech()) } else { None },
         };
         let dir = user_preset_dir();
         let _ = std::fs::create_dir_all(&dir);
@@ -643,15 +1247,19 @@ fn dirs_next() -> PathBuf {
 const FACTORY_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/factory_presets.json"));
 
 fn build_factory_presets() -> Vec<PresetEntry> {
-    let files: Vec<UserPresetFile> =
+    let files: Vec<PresetFile> =
         serde_json::from_str(FACTORY_JSON).expect("parse embedded factory presets");
     files
         .into_iter()
-        .map(|f| PresetEntry {
-            name: f.name,
-            meta: f.meta,
-            snapshot: f.params,
-            is_factory: true,
+        .map(|f| {
+            let name = f.name.clone();
+            let meta = f.meta.clone();
+            PresetEntry {
+                name,
+                meta,
+                snapshot: f.into_snapshot(),
+                is_factory: true,
+            }
         })
         .collect()
 }
