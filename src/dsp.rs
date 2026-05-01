@@ -328,6 +328,10 @@ impl Adsr {
         self.stage != EnvStage::Idle
     }
 
+    pub fn is_releasing(&self) -> bool {
+        self.stage == EnvStage::Release
+    }
+
     #[inline]
     pub fn tick(&mut self) -> f32 {
         match self.stage {

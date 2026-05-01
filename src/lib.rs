@@ -96,16 +96,16 @@ impl MinMaxSynth {
             //   Glide     — swap pitch with a portamento slide; no retrigger.
             self.arp_index = 0;
             self.arp_phase = 0.0;
-            if self.voices[0].is_pitched_active() && snapshot.legato_mode != LegatoMode::Retrigger {
+            // Always silence other voices (they may linger from poly mode).
+            for v in self.voices.iter_mut().skip(1) {
+                v.note_off();
+            }
+            if self.voices[0].is_held() && snapshot.legato_mode != LegatoMode::Retrigger {
                 match snapshot.legato_mode {
                     LegatoMode::Glide => self.voices[0].glide_to(note),
                     _ => self.voices[0].set_note(note),
                 }
             } else {
-                // Silence any other lingering voices first.
-                for v in self.voices.iter_mut().skip(1) {
-                    v.note_off();
-                }
                 self.voices[0].note_on(note, velocity, &snapshot, age);
             }
             return;

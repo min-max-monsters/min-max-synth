@@ -251,6 +251,13 @@ impl Voice {
         self.note.is_some() && !self.is_drum && self.env.is_active()
     }
 
+    /// Is this voice actively held (sounding but NOT in release phase)?
+    /// Returns false if the key has been released even if the release tail
+    /// is still audible.
+    pub fn is_held(&self) -> bool {
+        self.note.is_some() && !self.is_drum && self.env.is_active() && !self.env.is_releasing()
+    }
+
     /// Called when a non-looping sequence has finished all its steps.
     /// Fades to silence quickly (~30ms) and then deactivates the voice.
     #[inline]

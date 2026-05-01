@@ -42,7 +42,6 @@ pub struct EditorState {
     pub save_name: String,
     pub save_system: System,
     pub save_category: Category,
-    pub save_voicing: Voicing,
 }
 
 impl Default for EditorState {
@@ -60,7 +59,6 @@ impl Default for EditorState {
             save_name: String::new(),
             save_system: System::Generic,
             save_category: Category::Lead,
-            save_voicing: Voicing::Poly,
         }
     }
 }
@@ -823,16 +821,7 @@ fn draw_save_dialog(
                 }
             });
 
-            // Voicing picker
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Voicing:").size(11.0));
-                for &voi in Voicing::ALL {
-                    let sel = state.save_voicing == voi;
-                    if tag_button(ui, voi.label(), sel).clicked() {
-                        state.save_voicing = voi;
-                    }
-                }
-            });
+            // Voicing picker removed — inferred from params automatically.
 
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -841,12 +830,12 @@ fn draw_save_dialog(
                     .add_enabled(name_ok, egui::Button::new("Save"))
                     .clicked()
                 {
+                    let snap = ParamSnapshot::capture(params);
                     let meta = PresetMeta {
                         system: state.save_system,
                         category: state.save_category,
-                        voicing: state.save_voicing,
+                        voicing: snap.infer_voicing(),
                     };
-                    let snap = ParamSnapshot::capture(params);
                     state
                         .bank
                         .save_user_preset(state.save_name.trim(), meta, snap);

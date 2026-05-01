@@ -392,6 +392,17 @@ impl ParamSnapshot {
             s.set_parameter(p.d_level(i), d.level);
         }
     }
+
+    /// Derive voicing tag from the actual parameter values.
+    pub fn infer_voicing(&self) -> Voicing {
+        if self.mono && self.arp_rate > 0.0 {
+            Voicing::Arp
+        } else if self.mono {
+            Voicing::Mono
+        } else {
+            Voicing::Poly
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -551,7 +562,7 @@ impl PresetBank {
                     }
                 }
                 if let Some(voi) = self.filter_voicing {
-                    if e.meta.voicing != voi {
+                    if e.snapshot.infer_voicing() != voi {
                         return false;
                     }
                 }
