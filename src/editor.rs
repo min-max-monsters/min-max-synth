@@ -139,7 +139,7 @@ fn draw_header(
 ) {
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("min_max_synth")
+            RichText::new(format!("min_max_synth v{}", env!("MIN_MAX_VERSION")))
                 .color(palette::ACCENT)
                 .size(14.0)
                 .strong(),
